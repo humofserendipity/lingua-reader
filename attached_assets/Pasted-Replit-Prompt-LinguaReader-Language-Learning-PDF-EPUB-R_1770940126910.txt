@@ -1,0 +1,149 @@
+Replit Prompt: LinguaReader — Language Learning PDF/EPUB Reader
+App Overview
+Build a web app called LinguaReader — a PDF and EPUB reader designed for language learners. The user opens a book in a foreign language (Spanish for MVP), highlights text, and gets AI-powered language help via a side panel. It also includes a vocabulary/sentence saving system with basic flashcard review.
+Tech target: Web app (macOS first), with future iOS deployment in mind. Use a responsive framework that can later be wrapped for mobile (e.g., React + Capacitor, or a cross-platform approach).
+Demo scenario: A user opens a Harry Potter EPUB in Spanish and reads through it, highlighting words and passages to learn Spanish.
+
+Core Features (MVP)
+1. File Reader (PDF + EPUB)
+
+Support opening .pdf and .epub files from the user's device
+Render the book content with clean, readable typography
+Reading experience should be "in between" — not a bare scrolling view, but not a full e-reader either:
+
+Page-style or paginated sections (not infinite scroll)
+Remember reading position (bookmarks/progress tracking)
+Adjustable font size
+Dark/light mode
+
+
+Text must be selectable and highlightable
+
+2. Text Selection → AI Actions (Side Panel)
+When the user highlights/selects text, show a small floating toolbar with these action buttons. The AI response appears in a persistent side panel (split view layout: book on left, AI panel on right).
+Action buttons on highlight:
+
+Translate — Translate the selected text into English. Show the original and translation side by side.
+Quick Grammar — Brief grammatical breakdown. Example output:
+
+"había" → imperfect tense of "haber" (to have), used here as auxiliary
+"se dio cuenta" → reflexive preterite, idiomatic phrase meaning "realized"
+Keep it concise: tense, mood, root verb, and a short note on why this form is used
+
+
+Deep Grammar — Full linguistic analysis:
+
+Full sentence parse: subject, verb, object, modifiers
+Conjugation details (person, number, tense, mood) for every verb
+Explain why this tense/mood was chosen vs. alternatives (e.g., why preterite and not imperfect here?)
+Idiomatic expressions and cultural notes
+Comparison to English sentence structure
+
+
+Save to Vocab — Two sub-options:
+
+Save Word: Saves the word, its translation, part of speech, and an example sentence from the book
+Save Sentence/Passage: Saves the full text, translation, and a grammar/syntax breakdown explaining the underlying logic and structure
+
+
+
+3. Vocabulary & Flashcard System
+
+Vocab list view: Browse all saved words and sentences/passages
+Organize by: date added, book/source, word vs. sentence
+Basic flashcard review:
+
+For words: show Spanish → prompt for English meaning (and vice versa)
+For sentences/passages: show the sentence → prompt for translation, or show a grammar question about it (e.g., "What tense is the main verb?", "Why is subjunctive used here?")
+Simple "Got it" / "Still learning" tracking (no full SRS algorithm needed for MVP, but track which items the user struggles with)
+
+
+
+4. User Accounts & Cloud Sync
+
+User authentication (email/password, or OAuth with Google)
+Cloud-synced data:
+
+Reading progress per book
+Saved vocabulary and sentences
+Flashcard review history/state
+
+
+Users can access their data from any device
+
+
+LLM Integration
+
+Use the Claude API (Anthropic) for all AI features
+Model: claude-sonnet-4-20250514 (good balance of quality and speed for this use case)
+System prompt should instruct Claude to act as a Spanish language tutor, calibrating explanations to an intermediate learner
+Send the highlighted text plus ~2-3 surrounding sentences for context
+Each action (translate, quick grammar, deep grammar) should have its own tailored system prompt
+Handle rate limiting and errors gracefully (show user-friendly messages)
+
+
+UI/UX Design
+Layout
+
+Main view: Split panel — book reader (left, ~65% width) + AI/vocab panel (right, ~35% width)
+AI panel is collapsible/toggleable so user can read full-width when not using it
+On smaller screens / future mobile: AI panel slides in as an overlay
+
+Reader
+
+Clean serif or sans-serif font for the book text
+Gentle background color (cream/warm white for light mode)
+Floating action toolbar appears near the selected text (like Medium's highlight toolbar)
+Page turn or section navigation at bottom
+
+Side Panel Tabs
+
+AI Response — shows the latest translation/grammar result
+Vocab List — browse and search saved items
+Flashcards — start a review session
+
+General
+
+Modern, clean aesthetic (think: Readwise Reader meets Duolingo)
+Loading states for AI responses (streaming preferred if possible)
+Smooth transitions and animations
+
+
+Data Model (rough schema)
+User
+  - id, email, name, created_at
+
+Book
+  - id, user_id, title, author, file_type (pdf/epub), file_reference, current_position, created_at
+
+VocabItem
+  - id, user_id, book_id
+  - type: "word" | "sentence"
+  - original_text (Spanish)
+  - translation (English)
+  - grammar_notes (for sentences: syntax/logic breakdown)
+  - part_of_speech (for words)
+  - example_sentence (for words: sentence from the book where it appeared)
+  - context (surrounding text from the book)
+  - review_status: "new" | "learning" | "known"
+  - times_reviewed, times_correct
+  - created_at, last_reviewed_at
+
+Future Scope (don't build now, but architect for)
+
+Multi-language support — let users set any target language + native language pair
+Export vocab to CSV or Anki-compatible format
+Dictionary lookup — offline or API-based dictionary as a quick fallback before LLM
+Text-to-speech — hear pronunciation of highlighted text
+Sentence difficulty rating — AI rates sentences by CEFR level (A1–C2) to help users find passages at their level
+iOS native app via Capacitor or React Native wrapper
+
+
+Technical Notes
+
+Use a robust EPUB parsing library (e.g., epub.js for web)
+For PDFs, use pdf.js or similar — ensure text layer is extractable
+Store uploaded book files in cloud storage (e.g., Supabase Storage, S3)
+Use a database that Replit supports well (Supabase/Postgres recommended)
+Prefer streaming Claude API responses for better UX
+Implement proper error handling for file parsing failures (some PDFs have no text layer — warn the user)
