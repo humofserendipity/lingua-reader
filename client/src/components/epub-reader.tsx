@@ -1,9 +1,19 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import ePub, { type Book as EpubBook, type Rendition } from "epubjs";
-import { ChevronLeft, ChevronRight, Minus, Plus, ArrowLeft } from "lucide-react";
+import { ChevronLeft, ChevronRight, ArrowLeft, Settings, BookOpen, Columns2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Slider } from "@/components/ui/slider";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useTheme } from "@/lib/theme-provider";
 import { Link } from "wouter";
+
+const FONT_FAMILIES = [
+  { value: "serif", label: "Serif", css: "'Libre Baskerville', 'Georgia', serif" },
+  { value: "sans-serif", label: "Sans-serif", css: "'Inter', 'Helvetica Neue', sans-serif" },
+  { value: "monospace", label: "Monospace", css: "'JetBrains Mono', 'Fira Code', monospace" },
+];
 
 interface EpubReaderProps {
   bookUrl: string;
@@ -24,13 +34,21 @@ export function EpubReader({
   const bookRef = useRef<EpubBook | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
   const [fontSize, setFontSize] = useState(100);
+  const [fontFamily, setFontFamily] = useState("serif");
   const [currentChapter, setCurrentChapter] = useState("");
   const [atStart, setAtStart] = useState(true);
   const [atEnd, setAtEnd] = useState(false);
   const [showControls, setShowControls] = useState(false);
   const [bookLoaded, setBookLoaded] = useState(false);
+  const [doublePage, setDoublePage] = useState(false);
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wheelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wheelLockedRef = useRef(false);
   const { theme } = useTheme();
+
+  const getFontCss = useCallback((family: string) => {
+    return FONT_FAMILIES.find(f => f.value === family)?.css || FONT_FAMILIES[0].css;
+  }, []);
 
   const applyTheme = useCallback((rendition: Rendition) => {
     if (theme === "dark") {
@@ -76,7 +94,7 @@ export function EpubReader({
 
       rendition.themes.default({
         body: {
-          "font-family": "'Libre Baskerville', 'Georgia', serif !important",
+          "font-family": `${getFontCss("serif")} !important`,
           "line-height": "1.8 !important",
           "padding": "20px 40px !important",
         },
@@ -169,6 +187,39 @@ export function EpubReader({
     }
   }, [fontSize]);
 
+  useEffect(() => {
+    if (renditionRef.current) {
+      const css = getFontCss(fontFamily);
+      renditionRef.current.themes.register("custom-font", {
+        body: {
+          "font-family": `${css} !important`,
+          "line-height": "1.8 !important",
+          "padding": "20px 40px !important",
+        },
+        "p": {
+          "margin-bottom": "0.8em !important",
+        },
+        "a": {
+          "color": "inherit !important",
+        },
+      });
+      renditionRef.current.themes.select("custom-font");
+      renditionRef.current.themes.fontSize(`${fontSize}%`);
+      applyTheme(renditionRef.current);
+    }
+  }, [fontFamily, getFontCss, fontSize, applyTheme]);
+
+  useEffect(() => {
+    if (!renditionRef.current || !bookRef.current) return;
+    const rendition = renditionRef.current;
+    (rendition as any).spread(doublePage ? "auto" : "none");
+    const container = viewerRef.current;
+    if (container) {
+      const rect = container.getBoundingClientRect();
+      rendition.resize(rect.width, rect.height);
+    }
+  }, [doublePage]);
+
   function getSurroundingContext(range: Range): string {
     const parent = range.commonAncestorContainer;
     const textContent = parent.textContent || "";
@@ -189,9 +240,6 @@ export function EpubReader({
     showControlsTemporarily();
   }, [showControlsTemporarily]);
 
-  const increaseFontSize = () => setFontSize((prev) => Math.min(prev + 10, 160));
-  const decreaseFontSize = () => setFontSize((prev) => Math.max(prev - 10, 70));
-
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "ArrowLeft") goPrev();
@@ -200,6 +248,37 @@ export function EpubReader({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [goNext, goPrev]);
+
+  useEffect(() => {
+    const container = viewerRef.current;
+    if (!container) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      const selection = window.getSelection();
+      if (selection && selection.toString().trim().length > 0) return;
+
+      e.preventDefault();
+      if (wheelLockedRef.current) return;
+      wheelLockedRef.current = true;
+
+      if (e.deltaY > 0) {
+        renditionRef.current?.next();
+      } else if (e.deltaY < 0) {
+        renditionRef.current?.prev();
+      }
+
+      if (wheelTimerRef.current) clearTimeout(wheelTimerRef.current);
+      wheelTimerRef.current = setTimeout(() => {
+        wheelLockedRef.current = false;
+      }, 400);
+    };
+
+    container.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      container.removeEventListener("wheel", handleWheel);
+      if (wheelTimerRef.current) clearTimeout(wheelTimerRef.current);
+    };
+  }, []);
 
   const handleAreaClick = (e: React.MouseEvent) => {
     const container = viewerRef.current;
@@ -233,13 +312,50 @@ export function EpubReader({
           </span>
         </div>
         <div className="flex items-center gap-1">
-          <Button size="icon" variant="ghost" onClick={decreaseFontSize} data-testid="button-font-decrease">
-            <Minus className="w-3.5 h-3.5" />
+          <Button
+            size="icon"
+            variant={doublePage ? "default" : "ghost"}
+            onClick={() => setDoublePage(!doublePage)}
+            data-testid="button-toggle-spread"
+            title={doublePage ? "Single page" : "Double page"}
+          >
+            <Columns2 className="w-4 h-4" />
           </Button>
-          <span className="text-xs text-muted-foreground w-10 text-center">{fontSize}%</span>
-          <Button size="icon" variant="ghost" onClick={increaseFontSize} data-testid="button-font-increase">
-            <Plus className="w-3.5 h-3.5" />
-          </Button>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button size="icon" variant="ghost" data-testid="button-reader-settings">
+                <Settings className="w-4 h-4" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-64 space-y-4" data-testid="popover-reader-settings">
+              <div className="space-y-2">
+                <Label className="text-xs font-medium">Font Size: {fontSize}%</Label>
+                <Slider
+                  min={70}
+                  max={160}
+                  step={5}
+                  value={[fontSize]}
+                  onValueChange={([v]) => setFontSize(v)}
+                  data-testid="slider-font-size"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs font-medium">Font Family</Label>
+                <Select value={fontFamily} onValueChange={setFontFamily}>
+                  <SelectTrigger data-testid="select-font-family">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {FONT_FAMILIES.map((f) => (
+                      <SelectItem key={f.value} value={f.value} data-testid={`option-font-${f.value}`}>
+                        <span style={{ fontFamily: f.css }}>{f.label}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
       </div>
 

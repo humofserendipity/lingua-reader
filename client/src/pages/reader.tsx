@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { useRoute } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { EpubReader } from "@/components/epub-reader";
@@ -6,8 +6,7 @@ import { FloatingToolbar, type AIAction } from "@/components/floating-toolbar";
 import { AIPanel } from "@/components/ai-panel";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, BookOpen, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Loader2, BookOpen } from "lucide-react";
 import type { Book } from "@shared/schema";
 
 export default function ReaderPage() {
@@ -21,6 +20,10 @@ export default function ReaderPage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiAction, setAiAction] = useState("");
   const [toolbarVisible, setToolbarVisible] = useState(false);
+  const [panelWidth, setPanelWidth] = useState(380);
+  const isDraggingRef = useRef(false);
+  const dragStartXRef = useRef(0);
+  const dragStartWidthRef = useRef(0);
   const { toast } = useToast();
 
   const { data: book, isLoading } = useQuery<Book>({
@@ -46,6 +49,40 @@ export default function ReaderPage() {
   const handlePositionChange = useCallback((position: string, chapter?: string) => {
     savePositionMutation.mutate({ position, chapter });
   }, [savePositionMutation]);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDraggingRef.current) return;
+      e.preventDefault();
+      const delta = dragStartXRef.current - e.clientX;
+      const newWidth = Math.max(280, Math.min(600, dragStartWidthRef.current + delta));
+      setPanelWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      if (isDraggingRef.current) {
+        isDraggingRef.current = false;
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      }
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, []);
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingRef.current = true;
+    dragStartXRef.current = e.clientX;
+    dragStartWidthRef.current = panelWidth;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, [panelWidth]);
 
   const handleAction = useCallback(async (action: AIAction) => {
     setToolbarVisible(false);
@@ -166,23 +203,31 @@ export default function ReaderPage() {
         )}
       </div>
 
-      <div
-        className={`shrink-0 border-l bg-card/50 backdrop-blur-sm transition-all duration-300 overflow-hidden ${panelOpen ? "w-[380px]" : "w-0 border-l-0"}`}
-      >
-        {panelOpen && (
-          <div className="w-[380px] h-full">
-            <AIPanel
-              bookId={bookId || undefined}
-              selectedText={selectedText}
-              context={context}
-              aiResponse={aiResponse}
-              aiLoading={aiLoading}
-              aiAction={aiAction}
-              onClose={() => setPanelOpen(false)}
-            />
+      {panelOpen && (
+        <>
+          <div
+            className="shrink-0 w-1.5 cursor-col-resize bg-border/50 hover-elevate active-elevate-2 transition-colors z-30"
+            onMouseDown={handleResizeStart}
+            data-testid="resize-handle"
+          />
+          <div
+            className="shrink-0 bg-card/50 backdrop-blur-sm overflow-hidden"
+            style={{ width: panelWidth }}
+          >
+            <div className="h-full" style={{ width: panelWidth }}>
+              <AIPanel
+                bookId={bookId || undefined}
+                selectedText={selectedText}
+                context={context}
+                aiResponse={aiResponse}
+                aiLoading={aiLoading}
+                aiAction={aiAction}
+                onClose={() => setPanelOpen(false)}
+              />
+            </div>
           </div>
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 }

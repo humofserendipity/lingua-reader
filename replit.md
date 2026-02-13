@@ -24,13 +24,16 @@ LinguaReader is a language learning EPUB reader web app. Users upload EPUB books
 - `shared/models/` - Auth and chat models
 
 ## Key Features
-1. EPUB reader with paginated view, font size control, dark/light mode
-2. Text selection → floating toolbar with Translate, Quick Grammar, Deep Grammar, Save Word, Save Sentence
-3. AI panel showing streaming responses from Claude
-4. Vocabulary list with word/sentence tracking
-5. Flashcard review with Got It / Still Learning tracking
-6. Reading position persistence
-7. User authentication via Replit Auth
+1. EPUB reader with paginated view, font size/family controls, dark/light mode
+2. Scroll wheel page navigation with debounce
+3. Double-page spread toggle
+4. Resizable AI side panel with drag handle (280-600px)
+5. Text selection → floating toolbar with Translate, Quick Grammar, Deep Grammar, Save Word, Save Sentence
+6. AI panel showing streaming responses from Claude with markdown rendering
+7. Vocabulary list with word/sentence tracking
+8. Flashcard review with Got It / Still Learning tracking
+9. Reading position persistence
+10. User authentication via Replit Auth
 
 ## API Routes
 - `POST /api/books/upload` - Upload EPUB file
