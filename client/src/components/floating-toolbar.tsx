@@ -1,25 +1,17 @@
-import { Languages, BookText, GraduationCap, BookmarkPlus } from "lucide-react";
+import { Languages, BookText, GraduationCap, BookmarkPlus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export type AIAction = "translate" | "quick-grammar" | "deep-grammar" | "save-word" | "save-sentence";
 
 interface FloatingToolbarProps {
-  position: { x: number; y: number };
-  visible: boolean;
   onAction: (action: AIAction) => void;
+  onDismiss: () => void;
 }
 
-export function FloatingToolbar({ position, visible, onAction }: FloatingToolbarProps) {
-  if (!visible) return null;
-
+export function FloatingToolbar({ onAction, onDismiss }: FloatingToolbarProps) {
   return (
     <div
-      className="absolute z-50 flex items-center gap-0.5 rounded-md border bg-popover p-1 shadow-lg"
-      style={{
-        left: `${position.x}px`,
-        top: `${position.y + 8}px`,
-        transform: "translateX(-50%)",
-      }}
+      className="flex items-center gap-1 rounded-lg border bg-popover p-1.5 shadow-lg"
       data-testid="floating-toolbar"
     >
       <Button
@@ -52,6 +44,7 @@ export function FloatingToolbar({ position, visible, onAction }: FloatingToolbar
         <GraduationCap className="w-3.5 h-3.5" />
         Deep
       </Button>
+      <div className="w-px h-5 bg-border mx-0.5" />
       <Button
         size="sm"
         variant="ghost"
@@ -71,6 +64,15 @@ export function FloatingToolbar({ position, visible, onAction }: FloatingToolbar
       >
         <BookmarkPlus className="w-3.5 h-3.5" />
         Sentence
+      </Button>
+      <div className="w-px h-5 bg-border mx-0.5" />
+      <Button
+        size="icon"
+        variant="ghost"
+        onClick={onDismiss}
+        data-testid="button-dismiss-toolbar"
+      >
+        <X className="w-3.5 h-3.5" />
       </Button>
     </div>
   );

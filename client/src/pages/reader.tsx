@@ -6,9 +6,8 @@ import { FloatingToolbar, type AIAction } from "@/components/floating-toolbar";
 import { AIPanel } from "@/components/ai-panel";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { PanelRightOpen, PanelRightClose, Loader2, BookOpen } from "lucide-react";
+import { Loader2, BookOpen, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import type { Book } from "@shared/schema";
 
 export default function ReaderPage() {
@@ -17,12 +16,11 @@ export default function ReaderPage() {
 
   const [selectedText, setSelectedText] = useState("");
   const [context, setContext] = useState("");
-  const [toolbarPos, setToolbarPos] = useState({ x: 0, y: 0 });
-  const [toolbarVisible, setToolbarVisible] = useState(false);
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(false);
   const [aiResponse, setAiResponse] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiAction, setAiAction] = useState("");
+  const [toolbarVisible, setToolbarVisible] = useState(false);
   const { toast } = useToast();
 
   const { data: book, isLoading } = useQuery<Book>({
@@ -39,10 +37,9 @@ export default function ReaderPage() {
     },
   });
 
-  const handleTextSelect = useCallback((text: string, ctx: string, rect: DOMRect) => {
+  const handleTextSelect = useCallback((text: string, ctx: string) => {
     setSelectedText(text);
     setContext(ctx);
-    setToolbarPos({ x: rect.x + rect.width / 2, y: rect.y + rect.height });
     setToolbarVisible(true);
   }, []);
 
@@ -116,7 +113,6 @@ export default function ReaderPage() {
                   setAiResponse(data.error);
                 }
               } catch {
-                // skip malformed JSON
               }
             }
           }
@@ -132,7 +128,7 @@ export default function ReaderPage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-full">
+      <div className="flex items-center justify-center h-screen">
         <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
       </div>
     );
@@ -140,7 +136,7 @@ export default function ReaderPage() {
 
   if (!book) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-4">
+      <div className="flex flex-col items-center justify-center h-screen gap-4">
         <BookOpen className="w-12 h-12 text-muted-foreground" />
         <p className="text-muted-foreground">Book not found</p>
       </div>
@@ -148,46 +144,45 @@ export default function ReaderPage() {
   }
 
   return (
-    <div className="flex h-full relative">
-      <div className={`flex-1 relative transition-all duration-300 ${panelOpen ? "mr-0" : ""}`}>
-        <div className="absolute top-2 right-2 z-10">
-          <Button
-            size="icon"
-            variant="ghost"
-            onClick={() => setPanelOpen(!panelOpen)}
-            data-testid="button-toggle-panel"
-          >
-            {panelOpen ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
-          </Button>
-        </div>
-
+    <div className="flex h-screen w-full">
+      <div className="flex-1 min-w-0 relative">
         <EpubReader
           bookUrl={`/api/books/${bookId}/file`}
+          bookTitle={book.title}
           initialPosition={book.currentPosition || undefined}
           onPositionChange={handlePositionChange}
           onTextSelect={handleTextSelect}
         />
 
-        <FloatingToolbar
-          position={toolbarPos}
-          visible={toolbarVisible}
-          onAction={handleAction}
-        />
+        {toolbarVisible && (
+          <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center pb-6 pointer-events-none">
+            <div className="pointer-events-auto">
+              <FloatingToolbar
+                onAction={handleAction}
+                onDismiss={() => setToolbarVisible(false)}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
-      {panelOpen && (
-        <div className="w-[340px] border-l shrink-0 h-full">
-          <AIPanel
-            bookId={bookId || undefined}
-            selectedText={selectedText}
-            context={context}
-            aiResponse={aiResponse}
-            aiLoading={aiLoading}
-            aiAction={aiAction}
-            onClose={() => setPanelOpen(false)}
-          />
-        </div>
-      )}
+      <div
+        className={`shrink-0 border-l bg-card/50 backdrop-blur-sm transition-all duration-300 overflow-hidden ${panelOpen ? "w-[380px]" : "w-0 border-l-0"}`}
+      >
+        {panelOpen && (
+          <div className="w-[380px] h-full">
+            <AIPanel
+              bookId={bookId || undefined}
+              selectedText={selectedText}
+              context={context}
+              aiResponse={aiResponse}
+              aiLoading={aiLoading}
+              aiAction={aiAction}
+              onClose={() => setPanelOpen(false)}
+            />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
