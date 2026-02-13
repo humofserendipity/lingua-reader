@@ -1,4 +1,5 @@
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
 import { Languages, BookText, GraduationCap, BookmarkPlus, Loader2, X, BookOpen, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -127,8 +128,8 @@ export function AIPanel({
                     </div>
                   ) : (
                     <Card className="p-4">
-                      <div className="prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed whitespace-pre-wrap">
-                        {aiResponse}
+                      <div className="prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed">
+                        <ReactMarkdown>{aiResponse}</ReactMarkdown>
                       </div>
                     </Card>
                   )}
