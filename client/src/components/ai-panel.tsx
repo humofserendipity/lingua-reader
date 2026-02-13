@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
-import { Languages, BookText, GraduationCap, BookmarkPlus, Loader2, X, BookOpen, Sparkles } from "lucide-react";
+import { Languages, BookText, GraduationCap, BookmarkPlus, Loader2, X, BookOpen, Sparkles, Save, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -19,7 +19,9 @@ interface AIPanelProps {
   aiResponse: string;
   aiLoading: boolean;
   aiAction: string;
+  currentChapter?: string;
   onClose: () => void;
+  onSaveVocab?: (type: "word" | "sentence") => void;
 }
 
 export function AIPanel({
@@ -29,9 +31,12 @@ export function AIPanel({
   aiResponse,
   aiLoading,
   aiAction,
+  currentChapter,
   onClose,
+  onSaveVocab,
 }: AIPanelProps) {
   const [activeTab, setActiveTab] = useState("ai");
+  const [collapsedChapters, setCollapsedChapters] = useState<Set<string>>(new Set());
   const { toast } = useToast();
 
   const { data: vocabItems = [], isLoading: vocabLoading } = useQuery<VocabItem[]>({
@@ -47,6 +52,28 @@ export function AIPanel({
       toast({ title: "Removed from vocabulary" });
     },
   });
+
+  const vocabByChapter = useMemo(() => {
+    const groups: Record<string, VocabItem[]> = {};
+    for (const item of vocabItems) {
+      const key = item.chapter || "Uncategorized";
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(item);
+    }
+    return groups;
+  }, [vocabItems]);
+
+  const toggleChapter = (chapter: string) => {
+    setCollapsedChapters((prev) => {
+      const next = new Set(prev);
+      if (next.has(chapter)) {
+        next.delete(chapter);
+      } else {
+        next.add(chapter);
+      }
+      return next;
+    });
+  };
 
   const getActionIcon = () => {
     switch (aiAction) {
@@ -79,6 +106,9 @@ export function AIPanel({
     }
   };
 
+  const showSaveButton = !aiLoading && aiResponse && selectedText &&
+    (aiAction === "translate" || aiAction === "quick-grammar" || aiAction === "deep-grammar");
+
   return (
     <div className="h-full flex flex-col bg-card/30">
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full">
@@ -90,7 +120,7 @@ export function AIPanel({
             </TabsTrigger>
             <TabsTrigger value="vocab" className="text-xs gap-1.5" data-testid="tab-vocab">
               <BookOpen className="w-3 h-3" />
-              Vocab
+              Vocab ({vocabItems.length})
             </TabsTrigger>
           </TabsList>
           <Button size="icon" variant="ghost" onClick={onClose} data-testid="button-close-panel">
@@ -136,6 +166,31 @@ export function AIPanel({
                 </div>
               )}
 
+              {showSaveButton && onSaveVocab && (
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => onSaveVocab("word")}
+                    data-testid="button-save-as-word"
+                  >
+                    <Save className="w-3.5 h-3.5 mr-1.5" />
+                    Save as Word
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => onSaveVocab("sentence")}
+                    data-testid="button-save-as-sentence"
+                  >
+                    <Save className="w-3.5 h-3.5 mr-1.5" />
+                    Save as Sentence
+                  </Button>
+                </div>
+              )}
+
               {!selectedText && !aiResponse && !aiLoading && (
                 <div className="flex flex-col items-center justify-center py-16 text-center space-y-3">
                   <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
@@ -170,43 +225,64 @@ export function AIPanel({
                   <div className="space-y-1">
                     <p className="text-sm font-medium">No vocabulary saved yet</p>
                     <p className="text-xs text-muted-foreground max-w-[200px]">
-                      Select text and click "Word" or "Sentence" to save items to your vocabulary list.
+                      Select text and use the toolbar or AI panel to save items to your vocabulary list.
                     </p>
                   </div>
                 </div>
               ) : (
-                vocabItems.map((item) => (
-                  <Card key={item.id} className="p-3 space-y-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <Badge variant="outline" className="text-xs">
-                          {item.type}
-                        </Badge>
-                        {getStatusBadge(item.reviewStatus)}
-                        {item.partOfSpeech && (
-                          <span className="text-xs text-muted-foreground italic">{item.partOfSpeech}</span>
-                        )}
+                Object.entries(vocabByChapter).map(([chapter, items]) => (
+                  <div key={chapter} className="space-y-2">
+                    <button
+                      className="flex items-center gap-1.5 w-full text-left text-xs font-medium text-muted-foreground uppercase tracking-wider py-1"
+                      onClick={() => toggleChapter(chapter)}
+                      data-testid={`button-toggle-chapter-${chapter}`}
+                    >
+                      {collapsedChapters.has(chapter) ? (
+                        <ChevronRight className="w-3 h-3 shrink-0" />
+                      ) : (
+                        <ChevronDown className="w-3 h-3 shrink-0" />
+                      )}
+                      <span className="truncate">{chapter}</span>
+                      <Badge variant="secondary" className="ml-auto text-[10px]">{items.length}</Badge>
+                    </button>
+                    {!collapsedChapters.has(chapter) && (
+                      <div className="space-y-2 pl-1">
+                        {items.map((item) => (
+                          <Card key={item.id} className="p-3 space-y-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <Badge variant="outline" className="text-xs">
+                                  {item.type}
+                                </Badge>
+                                {getStatusBadge(item.reviewStatus)}
+                                {item.partOfSpeech && (
+                                  <span className="text-xs text-muted-foreground italic">{item.partOfSpeech}</span>
+                                )}
+                              </div>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="shrink-0"
+                                onClick={() => deleteVocabMutation.mutate(item.id)}
+                                data-testid={`button-delete-vocab-${item.id}`}
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
+                            <p className="font-serif text-sm font-medium">{item.originalText}</p>
+                            {item.translation && (
+                              <p className="text-sm text-muted-foreground">{item.translation}</p>
+                            )}
+                            {item.grammarNotes && (
+                              <p className="text-xs text-muted-foreground leading-relaxed border-t pt-2 mt-2">
+                                {item.grammarNotes}
+                              </p>
+                            )}
+                          </Card>
+                        ))}
                       </div>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="shrink-0"
-                        onClick={() => deleteVocabMutation.mutate(item.id)}
-                        data-testid={`button-delete-vocab-${item.id}`}
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-                    <p className="font-serif text-sm font-medium">{item.originalText}</p>
-                    {item.translation && (
-                      <p className="text-sm text-muted-foreground">{item.translation}</p>
                     )}
-                    {item.grammarNotes && (
-                      <p className="text-xs text-muted-foreground leading-relaxed border-t pt-2 mt-2">
-                        {item.grammarNotes}
-                      </p>
-                    )}
-                  </Card>
+                  </div>
                 ))
               )}
             </div>

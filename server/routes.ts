@@ -48,6 +48,7 @@ const saveVocabSchema = z.object({
   context: z.string().optional(),
   type: z.enum(["word", "sentence"]),
   bookId: z.number().nullable().optional(),
+  chapter: z.string().nullable().optional(),
 });
 
 const updatePositionSchema = z.object({
@@ -238,15 +239,15 @@ export async function registerRoutes(
     try {
       const userId = req.user.claims.sub;
       const parsed = saveVocabSchema.parse(req.body);
-      const { text, context, type, bookId } = parsed;
+      const { text, context, type, bookId, chapter } = parsed;
 
       const isWord = type === "word";
       const systemPrompt = isWord
-        ? "You are a Spanish language tutor. For the given Spanish word, provide a JSON response with these fields: translation (English), partOfSpeech (noun, verb, adjective, etc.), exampleSentence (the sentence from the book where this word appears, or create one if not available). Respond ONLY with valid JSON, no markdown."
-        : "You are a Spanish language tutor. For the given Spanish sentence/passage, provide a JSON response with these fields: translation (English translation), grammarNotes (a clear breakdown of the syntax, verb forms, and sentence structure explaining the underlying logic). Respond ONLY with valid JSON, no markdown.";
+        ? `You are a Spanish language tutor. The user selected a Spanish word from a book. Identify the single word being studied. Respond with ONLY a raw JSON object (no markdown, no code fences, no extra text). JSON fields: "translation" (concise English translation of the word), "partOfSpeech" (noun/verb/adjective/etc.), "exampleSentence" (a short Spanish sentence using the word).`
+        : `You are a Spanish language tutor. The user selected a Spanish sentence or passage from a book. Respond with ONLY a raw JSON object (no markdown, no code fences, no extra text). JSON fields: "translation" (natural English translation), "grammarNotes" (brief breakdown of key grammar points, verb tenses, and structure).`;
 
       const userMessage = context
-        ? `Context: "${context}"\n\nSelected ${type}: "${text}"`
+        ? `Context from book: "${context}"\n\nSelected ${type}: "${text}"`
         : `Selected ${type}: "${text}"`;
 
       const response = await anthropic.messages.create({
@@ -259,16 +260,21 @@ export async function registerRoutes(
       let aiData: any = {};
       const textContent = response.content[0];
       if (textContent.type === "text") {
+        let rawText = textContent.text.trim();
+        rawText = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+        rawText = rawText.trim();
+
         try {
-          aiData = JSON.parse(textContent.text);
+          aiData = JSON.parse(rawText);
         } catch {
-          aiData = { translation: textContent.text };
+          aiData = { translation: rawText };
         }
       }
 
       const vocabItem = await storage.createVocabItem({
         userId,
         bookId: bookId || null,
+        chapter: chapter || null,
         type,
         originalText: text,
         translation: aiData.translation || null,

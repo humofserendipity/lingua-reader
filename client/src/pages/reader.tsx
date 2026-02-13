@@ -21,6 +21,7 @@ export default function ReaderPage() {
   const [aiAction, setAiAction] = useState("");
   const [toolbarVisible, setToolbarVisible] = useState(false);
   const [panelWidth, setPanelWidth] = useState(380);
+  const [currentChapter, setCurrentChapter] = useState("");
   const isDraggingRef = useRef(false);
   const dragStartXRef = useRef(0);
   const dragStartWidthRef = useRef(0);
@@ -47,6 +48,7 @@ export default function ReaderPage() {
   }, []);
 
   const handlePositionChange = useCallback((position: string, chapter?: string) => {
+    if (chapter) setCurrentChapter(chapter);
     savePositionMutation.mutate({ position, chapter });
   }, [savePositionMutation]);
 
@@ -97,6 +99,7 @@ export default function ReaderPage() {
           context,
           type: action === "save-word" ? "word" : "sentence",
           bookId,
+          chapter: currentChapter || null,
         });
         const data = await res.json();
         setAiResponse(data.message || "Saved successfully!");
@@ -161,7 +164,31 @@ export default function ReaderPage() {
     } finally {
       setAiLoading(false);
     }
-  }, [selectedText, context, bookId, toast]);
+  }, [selectedText, context, bookId, toast, currentChapter]);
+
+  const handleSaveFromPanel = useCallback(async (type: "word" | "sentence") => {
+    if (!selectedText) return;
+    setAiLoading(true);
+    setAiAction(type === "word" ? "save-word" : "save-sentence");
+    try {
+      const res = await apiRequest("POST", "/api/ai/save-vocab", {
+        text: selectedText,
+        context,
+        type,
+        bookId,
+        chapter: currentChapter || null,
+      });
+      const data = await res.json();
+      setAiResponse(data.message || "Saved successfully!");
+      queryClient.invalidateQueries({ queryKey: ["/api/vocab"] });
+      toast({ title: type === "word" ? "Word saved!" : "Sentence saved!" });
+    } catch (err: any) {
+      setAiResponse("Failed to save. Please try again.");
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setAiLoading(false);
+    }
+  }, [selectedText, context, bookId, currentChapter, toast]);
 
   if (isLoading) {
     return (
@@ -222,7 +249,9 @@ export default function ReaderPage() {
                 aiResponse={aiResponse}
                 aiLoading={aiLoading}
                 aiAction={aiAction}
+                currentChapter={currentChapter}
                 onClose={() => setPanelOpen(false)}
+                onSaveVocab={handleSaveFromPanel}
               />
             </div>
           </div>

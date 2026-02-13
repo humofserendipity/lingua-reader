@@ -245,11 +245,14 @@ export function EpubReader({
   useEffect(() => {
     if (!renditionRef.current || !bookRef.current) return;
     const rendition = renditionRef.current;
-    (rendition as any).spread(doublePage ? "auto" : "none");
-    const container = viewerRef.current;
-    if (container) {
-      const rect = container.getBoundingClientRect();
-      rendition.resize(rect.width, rect.height);
+    try {
+      (rendition as any).spread(doublePage ? "auto" : "none");
+      const container = viewerRef.current;
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        rendition.resize(rect.width, rect.height);
+      }
+    } catch {
     }
   }, [doublePage]);
 

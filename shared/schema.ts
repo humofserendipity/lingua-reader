@@ -22,6 +22,7 @@ export const vocabItems = pgTable("vocab_items", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull().references(() => users.id),
   bookId: integer("book_id").references(() => books.id),
+  chapter: text("chapter"),
   type: text("type").notNull(),
   originalText: text("original_text").notNull(),
   translation: text("translation"),
