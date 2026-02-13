@@ -143,6 +143,39 @@ export function EpubReader({
         }
       });
 
+      rendition.hooks.content.register((contents: any) => {
+        const doc = contents.document;
+        if (!doc) return;
+
+        const handleWheel = (e: WheelEvent) => {
+          const sel = doc.getSelection?.();
+          if (sel && sel.toString().trim().length > 0) return;
+
+          e.preventDefault();
+          if (wheelLockedRef.current) return;
+          wheelLockedRef.current = true;
+
+          if (e.deltaY > 0) {
+            renditionRef.current?.next();
+          } else if (e.deltaY < 0) {
+            renditionRef.current?.prev();
+          }
+
+          if (wheelTimerRef.current) clearTimeout(wheelTimerRef.current);
+          wheelTimerRef.current = setTimeout(() => {
+            wheelLockedRef.current = false;
+          }, 400);
+        };
+
+        doc.addEventListener("wheel", handleWheel, { passive: false });
+
+        if (contents.on) {
+          contents.on("unload", () => {
+            doc.removeEventListener("wheel", handleWheel);
+          });
+        }
+      });
+
       setBookLoaded(true);
 
       const resizeObserver = new ResizeObserver((entries) => {
@@ -250,32 +283,7 @@ export function EpubReader({
   }, [goNext, goPrev]);
 
   useEffect(() => {
-    const container = viewerRef.current;
-    if (!container) return;
-
-    const handleWheel = (e: WheelEvent) => {
-      const selection = window.getSelection();
-      if (selection && selection.toString().trim().length > 0) return;
-
-      e.preventDefault();
-      if (wheelLockedRef.current) return;
-      wheelLockedRef.current = true;
-
-      if (e.deltaY > 0) {
-        renditionRef.current?.next();
-      } else if (e.deltaY < 0) {
-        renditionRef.current?.prev();
-      }
-
-      if (wheelTimerRef.current) clearTimeout(wheelTimerRef.current);
-      wheelTimerRef.current = setTimeout(() => {
-        wheelLockedRef.current = false;
-      }, 400);
-    };
-
-    container.addEventListener("wheel", handleWheel, { passive: false });
     return () => {
-      container.removeEventListener("wheel", handleWheel);
       if (wheelTimerRef.current) clearTimeout(wheelTimerRef.current);
     };
   }, []);
