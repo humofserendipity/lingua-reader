@@ -145,6 +145,7 @@ export async function registerRoutes(
         return res.status(404).json({ message: "File not found on disk" });
       }
 
+      res.setHeader("Content-Type", "application/epub+zip");
       res.sendFile(filePath);
     } catch (error: any) {
       res.status(500).json({ message: error.message });

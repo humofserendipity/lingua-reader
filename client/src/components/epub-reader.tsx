@@ -39,84 +39,96 @@ export function EpubReader({
   useEffect(() => {
     if (!viewerRef.current) return;
 
-    const book = ePub(bookUrl);
-    bookRef.current = book;
+    let destroyed = false;
 
-    const rendition = book.renderTo(viewerRef.current, {
-      width: "100%",
-      height: "100%",
-      spread: "none",
-      flow: "paginated",
-    });
+    async function loadBook() {
+      const response = await fetch(bookUrl, { credentials: "include" });
+      if (!response.ok || destroyed) return;
+      const arrayBuffer = await response.arrayBuffer();
+      if (destroyed || !viewerRef.current) return;
 
-    renditionRef.current = rendition;
+      const book = ePub(arrayBuffer);
+      bookRef.current = book;
 
-    rendition.themes.default({
-      body: {
-        "font-family": "'Libre Baskerville', 'Georgia', serif !important",
-        "line-height": "1.8 !important",
-        "padding": "20px 40px !important",
-      },
-      "p": {
-        "margin-bottom": "0.8em !important",
-      },
-      "a": {
-        "color": "inherit !important",
-      },
-    });
+      const rendition = book.renderTo(viewerRef.current, {
+        width: "100%",
+        height: "100%",
+        spread: "none",
+        flow: "paginated",
+      });
 
-    rendition.themes.fontSize(`${fontSize}%`);
-    applyTheme(rendition);
+      renditionRef.current = rendition;
 
-    if (initialPosition) {
-      rendition.display(initialPosition);
-    } else {
-      rendition.display();
+      rendition.themes.default({
+        body: {
+          "font-family": "'Libre Baskerville', 'Georgia', serif !important",
+          "line-height": "1.8 !important",
+          "padding": "20px 40px !important",
+        },
+        "p": {
+          "margin-bottom": "0.8em !important",
+        },
+        "a": {
+          "color": "inherit !important",
+        },
+      });
+
+      rendition.themes.fontSize(`${fontSize}%`);
+      applyTheme(rendition);
+
+      if (initialPosition) {
+        rendition.display(initialPosition);
+      } else {
+        rendition.display();
+      }
+
+      rendition.on("relocated", (location: any) => {
+        const cfi = location.start.cfi;
+        setAtStart(location.atStart);
+        setAtEnd(location.atEnd);
+
+        book.loaded.navigation.then((nav) => {
+          const chapter = nav.toc.find((item: any) => {
+            return book.canonical(item.href) === book.canonical(location.start.href);
+          });
+          const chapterTitle = chapter?.label?.trim() || "";
+          setCurrentChapter(chapterTitle);
+          onPositionChange?.(cfi, chapterTitle);
+        });
+      });
+
+      rendition.on("selected", (cfiRange: string) => {
+        rendition.getRange(cfiRange).then((range: Range) => {
+          const selectedText = range.toString().trim();
+          if (!selectedText) return;
+
+          const containerEl = viewerRef.current;
+          if (!containerEl) return;
+
+          const rects = range.getClientRects();
+          if (rects.length === 0) return;
+
+          const lastRect = rects[rects.length - 1];
+          const containerRect = containerEl.getBoundingClientRect();
+
+          const adjustedRect = new DOMRect(
+            lastRect.x - containerRect.x,
+            lastRect.y - containerRect.y,
+            lastRect.width,
+            lastRect.height
+          );
+
+          const surrounding = getSurroundingContext(range);
+          onTextSelect?.(selectedText, surrounding, adjustedRect);
+        });
+      });
     }
 
-    rendition.on("relocated", (location: any) => {
-      const cfi = location.start.cfi;
-      setAtStart(location.atStart);
-      setAtEnd(location.atEnd);
-
-      book.loaded.navigation.then((nav) => {
-        const chapter = nav.toc.find((item: any) => {
-          return book.canonical(item.href) === book.canonical(location.start.href);
-        });
-        const chapterTitle = chapter?.label?.trim() || "";
-        setCurrentChapter(chapterTitle);
-        onPositionChange?.(cfi, chapterTitle);
-      });
-    });
-
-    rendition.on("selected", (cfiRange: string) => {
-      rendition.getRange(cfiRange).then((range: Range) => {
-        const selectedText = range.toString().trim();
-        if (!selectedText) return;
-
-        const containerEl = viewerRef.current;
-        if (!containerEl) return;
-
-        const rects = range.getClientRects();
-        if (rects.length === 0) return;
-
-        const lastRect = rects[rects.length - 1];
-        const containerRect = containerEl.getBoundingClientRect();
-
-        const adjustedRect = new DOMRect(
-          lastRect.x - containerRect.x,
-          lastRect.y - containerRect.y,
-          lastRect.width,
-          lastRect.height
-        );
-
-        const surrounding = getSurroundingContext(range);
-        onTextSelect?.(selectedText, surrounding, adjustedRect);
-      });
-    });
+    loadBook();
 
     return () => {
-      book.destroy();
+      destroyed = true;
+      bookRef.current?.destroy();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookUrl]);
