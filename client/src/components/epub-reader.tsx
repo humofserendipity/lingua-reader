@@ -47,6 +47,8 @@ export function EpubReader({
   const bookRef = useRef<EpubBook | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
   const currentCfiRef = useRef<string>("");
+  // Detect touch device once — stable for the session
+  const isMobileRef = useRef(window.matchMedia("(pointer: coarse)").matches);
 
   const [fontSize, setFontSize] = useState<number>(() => getSaved("fontSize", 100));
   const [fontFamily, setFontFamily] = useState<string>(() => getSaved("fontFamily", "serif"));
@@ -66,7 +68,7 @@ export function EpubReader({
   const resizeRestoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { theme } = useTheme();
 
-  // Persist settings to localStorage
+  // Persist settings
   useEffect(() => { localStorage.setItem(LS_PREFIX + "fontSize", JSON.stringify(fontSize)); }, [fontSize]);
   useEffect(() => { localStorage.setItem(LS_PREFIX + "fontFamily", JSON.stringify(fontFamily)); }, [fontFamily]);
   useEffect(() => { localStorage.setItem(LS_PREFIX + "doublePage", JSON.stringify(doublePage)); }, [doublePage]);
@@ -94,6 +96,7 @@ export function EpubReader({
   useEffect(() => {
     if (!viewerRef.current) return;
     let destroyed = false;
+    const isMobile = isMobileRef.current;
 
     async function loadBook() {
       const response = await fetch(bookUrl, { credentials: "include" });
@@ -107,12 +110,10 @@ export function EpubReader({
       const book = ePub(arrayBuffer);
       bookRef.current = book;
 
-      const rendition = book.renderTo(container, {
-        width: rect.width,
-        height: rect.height,
-        spread: "none",
-        flow: "paginated",
-      });
+      const rendition = book.renderTo(container, isMobile
+        ? { width: rect.width, height: rect.height, flow: "scrolled", manager: "continuous" }
+        : { width: rect.width, height: rect.height, spread: "none", flow: "paginated" }
+      );
       renditionRef.current = rendition;
 
       rendition.themes.default({
@@ -181,7 +182,7 @@ export function EpubReader({
         });
       });
 
-      rendition.on("selected", (cfiRange: string, contents: any) => {
+      rendition.on("selected", (cfiRange: string) => {
         try {
           const range = rendition.getRange(cfiRange);
           if (!range) return;
@@ -189,7 +190,6 @@ export function EpubReader({
           if (!selectedText) return;
           const surrounding = getSurroundingContext(range);
 
-          // Compute coords relative to the viewport
           let coords: { x: number; y: number } | undefined;
           try {
             const iframeEl = container.querySelector("iframe");
@@ -198,10 +198,7 @@ export function EpubReader({
               const selRects = range.getClientRects();
               if (selRects.length > 0) {
                 const lastRect = selRects[selRects.length - 1];
-                coords = {
-                  x: iframeRect.left + lastRect.right,
-                  y: iframeRect.top + lastRect.bottom,
-                };
+                coords = { x: iframeRect.left + lastRect.right, y: iframeRect.top + lastRect.bottom };
               }
             }
           } catch { /* ignore */ }
@@ -212,58 +209,72 @@ export function EpubReader({
         }
       });
 
-      // Register iframe content hooks
+      // Content hooks — wheel/keyboard only on desktop
       rendition.hooks.content.register((contents: any) => {
         const doc = contents.document;
         if (!doc) return;
 
-        // Wheel navigation
-        const handleWheel = (e: WheelEvent) => {
-          const sel = doc.getSelection?.();
-          if (sel && sel.toString().trim().length > 0) return;
-          e.preventDefault();
-          if (wheelLockedRef.current) return;
-          wheelLockedRef.current = true;
-          if (e.deltaY > 0) renditionRef.current?.next();
-          else if (e.deltaY < 0) renditionRef.current?.prev();
-          if (wheelTimerRef.current) clearTimeout(wheelTimerRef.current);
-          wheelTimerRef.current = setTimeout(() => { wheelLockedRef.current = false; }, 400);
-        };
+        const cleanup: Array<() => void> = [];
 
-        // Keyboard navigation inside iframe
-        const handleKeyDown = (e: KeyboardEvent) => {
-          if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        if (!isMobile) {
+          const handleWheel = (e: WheelEvent) => {
+            const sel = doc.getSelection?.();
+            if (sel && sel.toString().trim().length > 0) return;
             e.preventDefault();
-            if (e.key === "ArrowLeft") renditionRef.current?.prev();
-            else renditionRef.current?.next();
-          }
-        };
+            if (wheelLockedRef.current) return;
+            wheelLockedRef.current = true;
+            if (e.deltaY > 0) renditionRef.current?.next();
+            else if (e.deltaY < 0) renditionRef.current?.prev();
+            if (wheelTimerRef.current) clearTimeout(wheelTimerRef.current);
+            wheelTimerRef.current = setTimeout(() => { wheelLockedRef.current = false; }, 400);
+          };
 
-        doc.addEventListener("wheel", handleWheel, { passive: false });
-        doc.addEventListener("keydown", handleKeyDown);
+          const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+              e.preventDefault();
+              if (e.key === "ArrowLeft") renditionRef.current?.prev();
+              else renditionRef.current?.next();
+            }
+          };
+
+          doc.addEventListener("wheel", handleWheel, { passive: false });
+          doc.addEventListener("keydown", handleKeyDown);
+          cleanup.push(
+            () => doc.removeEventListener("wheel", handleWheel),
+            () => doc.removeEventListener("keydown", handleKeyDown),
+          );
+        }
 
         if (contents.on) {
-          contents.on("unload", () => {
-            doc.removeEventListener("wheel", handleWheel);
-            doc.removeEventListener("keydown", handleKeyDown);
-          });
+          contents.on("unload", () => cleanup.forEach(fn => fn()));
         }
       });
 
+      // On mobile, show controls when user scrolls in the viewer container
+      if (isMobile) {
+        container.addEventListener("scroll", showControlsTemporarily, { passive: true });
+      }
+
       setBookLoaded(true);
 
-      // ResizeObserver — save CFI before resize, restore after
+      // ResizeObserver
       const resizeObserver = new ResizeObserver((entries) => {
         for (const entry of entries) {
           const { width, height } = entry.contentRect;
           if (width > 0 && height > 0 && renditionRef.current) {
-            const savedCfi = currentCfiRef.current;
-            try { renditionRef.current.resize(width, height); } catch { /* ignore */ }
-            if (savedCfi) {
-              if (resizeRestoreTimerRef.current) clearTimeout(resizeRestoreTimerRef.current);
-              resizeRestoreTimerRef.current = setTimeout(() => {
-                try { renditionRef.current?.display(savedCfi); } catch { /* ignore */ }
-              }, 150);
+            if (!isMobile) {
+              // Desktop: restore CFI position after resize
+              const savedCfi = currentCfiRef.current;
+              try { renditionRef.current.resize(width, height); } catch { /* ignore */ }
+              if (savedCfi) {
+                if (resizeRestoreTimerRef.current) clearTimeout(resizeRestoreTimerRef.current);
+                resizeRestoreTimerRef.current = setTimeout(() => {
+                  try { renditionRef.current?.display(savedCfi); } catch { /* ignore */ }
+                }, 150);
+              }
+            } else {
+              // Mobile: just resize — scroll mode keeps position naturally
+              try { renditionRef.current.resize(width, height); } catch { /* ignore */ }
             }
           }
         }
@@ -310,7 +321,7 @@ export function EpubReader({
   }, [fontFamily, getFontCss, fontSize, applyTheme]);
 
   useEffect(() => {
-    if (!renditionRef.current || !bookRef.current) return;
+    if (isMobileRef.current || !renditionRef.current || !bookRef.current) return;
     try {
       (renditionRef.current as any).spread(doublePage ? "auto" : "none");
       const container = viewerRef.current;
@@ -341,8 +352,9 @@ export function EpubReader({
     showControlsTemporarily();
   }, [showControlsTemporarily]);
 
-  // Window-level keyboard handler (for when focus is outside iframe)
+  // Window-level keyboard handler (desktop only)
   useEffect(() => {
+    if (isMobileRef.current) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "ArrowLeft") goPrev();
       if (e.key === "ArrowRight") goNext();
@@ -356,6 +368,7 @@ export function EpubReader({
   }, []);
 
   const handleAreaClick = (e: React.MouseEvent) => {
+    if (isMobileRef.current) return;
     const container = viewerRef.current;
     if (!container) return;
     const rect = container.getBoundingClientRect();
@@ -370,6 +383,8 @@ export function EpubReader({
     renditionRef.current?.display(href);
     setTocOpen(false);
   };
+
+  const isMobile = isMobileRef.current;
 
   return (
     <div className="flex flex-col h-full bg-background overflow-hidden">
@@ -388,7 +403,6 @@ export function EpubReader({
           </span>
         </div>
         <div className="flex items-center gap-1">
-          {/* TOC button */}
           <Button
             size="icon"
             variant={tocOpen ? "default" : "ghost"}
@@ -399,15 +413,17 @@ export function EpubReader({
             <List className="w-4 h-4" />
           </Button>
 
-          <Button
-            size="icon"
-            variant={doublePage ? "default" : "ghost"}
-            onClick={() => setDoublePage(!doublePage)}
-            data-testid="button-toggle-spread"
-            title={doublePage ? "Single page" : "Double page"}
-          >
-            <Columns2 className="w-4 h-4" />
-          </Button>
+          {!isMobile && (
+            <Button
+              size="icon"
+              variant={doublePage ? "default" : "ghost"}
+              onClick={() => setDoublePage(!doublePage)}
+              data-testid="button-toggle-spread"
+              title={doublePage ? "Single page" : "Double page"}
+            >
+              <Columns2 className="w-4 h-4" />
+            </Button>
+          )}
 
           <ThemeToggle />
 
@@ -479,30 +495,41 @@ export function EpubReader({
       )}
 
       {/* Reader area */}
-      <div className="flex-1 relative overflow-hidden min-h-0" onClick={handleAreaClick}>
-        <div ref={viewerRef} className="w-full h-full" data-testid="epub-viewer" />
+      <div
+        className={`flex-1 relative min-h-0 ${isMobile ? "overflow-y-auto" : "overflow-hidden"}`}
+        onClick={handleAreaClick}
+      >
+        <div
+          ref={viewerRef}
+          className={isMobile ? "w-full" : "w-full h-full"}
+          data-testid="epub-viewer"
+        />
 
-        <button
-          className={`absolute left-0 top-0 bottom-0 w-16 flex items-center justify-start pl-2 transition-opacity duration-300 z-10 ${showControls ? "opacity-60" : "opacity-0"}`}
-          onClick={(e) => { e.stopPropagation(); goPrev(); }}
-          disabled={atStart}
-          data-testid="button-prev-page"
-          aria-label="Previous page"
-          style={{ background: "transparent", border: "none", cursor: atStart ? "default" : "pointer" }}
-        >
-          <ChevronLeft className="w-6 h-6 text-muted-foreground" />
-        </button>
-
-        <button
-          className={`absolute right-0 top-0 bottom-0 w-16 flex items-center justify-end pr-2 transition-opacity duration-300 z-10 ${showControls ? "opacity-60" : "opacity-0"}`}
-          onClick={(e) => { e.stopPropagation(); goNext(); }}
-          disabled={atEnd}
-          data-testid="button-next-page"
-          aria-label="Next page"
-          style={{ background: "transparent", border: "none", cursor: atEnd ? "default" : "pointer" }}
-        >
-          <ChevronRight className="w-6 h-6 text-muted-foreground" />
-        </button>
+        {/* Desktop-only prev/next overlay buttons */}
+        {!isMobile && (
+          <>
+            <button
+              className={`absolute left-0 top-0 bottom-0 w-16 flex items-center justify-start pl-2 transition-opacity duration-300 z-10 ${showControls ? "opacity-60" : "opacity-0"}`}
+              onClick={(e) => { e.stopPropagation(); goPrev(); }}
+              disabled={atStart}
+              data-testid="button-prev-page"
+              aria-label="Previous page"
+              style={{ background: "transparent", border: "none", cursor: atStart ? "default" : "pointer" }}
+            >
+              <ChevronLeft className="w-6 h-6 text-muted-foreground" />
+            </button>
+            <button
+              className={`absolute right-0 top-0 bottom-0 w-16 flex items-center justify-end pr-2 transition-opacity duration-300 z-10 ${showControls ? "opacity-60" : "opacity-0"}`}
+              onClick={(e) => { e.stopPropagation(); goNext(); }}
+              disabled={atEnd}
+              data-testid="button-next-page"
+              aria-label="Next page"
+              style={{ background: "transparent", border: "none", cursor: atEnd ? "default" : "pointer" }}
+            >
+              <ChevronRight className="w-6 h-6 text-muted-foreground" />
+            </button>
+          </>
+        )}
       </div>
 
       {/* Bottom location bar */}

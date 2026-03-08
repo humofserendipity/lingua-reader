@@ -24,6 +24,7 @@ export default function ReaderPage() {
   const [panelWidth, setPanelWidth] = useState(380);
   const [currentChapter, setCurrentChapter] = useState("");
   const lastPositionRef = useRef<{ position: string; chapter?: string } | null>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isDraggingRef = useRef(false);
   const dragStartXRef = useRef(0);
   const dragStartWidthRef = useRef(0);
@@ -53,7 +54,10 @@ export default function ReaderPage() {
   const handlePositionChange = useCallback((position: string, chapter?: string) => {
     if (chapter) setCurrentChapter(chapter);
     lastPositionRef.current = { position, chapter };
-    savePositionMutation.mutate({ position, chapter });
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      savePositionMutation.mutate({ position, chapter });
+    }, 2000);
   }, [savePositionMutation]);
 
   // Save position on page exit (beforeunload)
