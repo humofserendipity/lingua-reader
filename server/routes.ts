@@ -1,12 +1,17 @@
-import type { Express } from "express";
-import { createServer, type Server } from "http";
+import type { Express, Request, Response, NextFunction } from "express";
+import { type Server } from "http";
 import { storage } from "./storage";
-import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
+import { db } from "./db";
+import { users } from "@shared/schema";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { z } from "zod";
+
+// Local dev: auth disabled — all requests treated as a single local user
+const LOCAL_USER_ID = "local-user";
+const isAuthenticated = (_req: Request, _res: Response, next: NextFunction) => next();
 
 const uploadDir = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(uploadDir)) {
@@ -32,10 +37,7 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 },
 });
 
-const anthropic = new Anthropic({
-  apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
-});
+const genai = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
 
 const analyzeSchema = z.object({
   text: z.string().min(1),
@@ -61,21 +63,54 @@ const reviewSchema = z.object({
 });
 
 function getSystemPrompt(action: string): string {
-  const base = "You are a Spanish language tutor helping an intermediate learner understand Spanish text. Always respond in English unless showing the original Spanish text.";
+  const base = "You are a Spanish language tutor helping an intermediate learner understand Spanish text. Always respond in English unless showing the original Spanish text. Be concise and direct.";
 
   switch (action) {
     case "translate":
-      return `${base} Translate the selected Spanish text into natural English. Show the original text and translation clearly. If it's a single word, also provide common alternative meanings.`;
+      return `${base}
+
+For the selected Spanish text, respond with this exact format:
+
+**Translation**
+[Natural English translation]
+
+**Word-by-word**
+| Spanish | English | Notes |
+|---------|---------|-------|
+[one row per key word]
+
+If it is a single word, add a **Also means** line listing 2-3 alternative meanings separated by commas. Skip the table for single words and instead show: *[part of speech]* — [primary meaning]. Keep the total response under 150 words.`;
+
     case "quick-grammar":
-      return `${base} Provide a brief grammatical breakdown of the selected text. For each verb, state: tense, mood, root verb (infinitive), and a short note on why this form is used. For idiomatic expressions, explain the meaning. Keep it concise — use bullet points.`;
+      return `${base}
+
+For each verb in the selected text, show:
+**[verb form]** ← [infinitive], [tense & mood], [person/number]
+> [one sentence explaining why this form is used here]
+
+For any idiom or unusual construction, add a bullet point explaining it. Maximum 5 bullet points total. No full sentence paragraphs — use the structured format above only.`;
+
     case "deep-grammar":
-      return `${base} Provide a full linguistic analysis of the selected text:
-1. Full sentence parse: subject, verb, object, modifiers
-2. Conjugation details for every verb (person, number, tense, mood)
-3. Explain why this tense/mood was chosen vs. alternatives
-4. Idiomatic expressions and cultural notes
-5. Comparison to English sentence structure
-Be thorough but clear.`;
+      return `${base}
+
+Analyse the selected text with these sections (use markdown headers):
+
+## Sentence Structure
+Subject | Verb phrase | Object/Complement — one line each with labels.
+
+## Verb Table
+| Form | Infinitive | Person | Tense | Mood | Why used |
+|------|-----------|--------|-------|------|----------|
+[one row per verb]
+
+## Key Points
+- [idiomatic expressions, subjunctive triggers, ser vs estar, por vs para, etc. — one bullet per item, max 5]
+
+## English Comparison
+One short paragraph on how this differs from English word order or grammar.
+
+Be precise. Avoid filler. Total response under 300 words.`;
+
     default:
       return base;
   }
@@ -85,12 +120,17 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  await setupAuth(app);
-  registerAuthRoutes(app);
+  // Ensure the local dev user exists in the DB (needed for FK constraints)
+  await db.insert(users).values({ id: LOCAL_USER_ID, email: "local@dev.local", firstName: "Local", lastName: "Dev" }).onConflictDoNothing();
+
+  // Mock auth endpoint so the client thinks it's logged in
+  app.get("/api/auth/user", (_req, res) => {
+    res.json({ id: LOCAL_USER_ID, email: "local@dev.local", firstName: "Local", lastName: "Dev", profileImageUrl: null });
+  });
 
   app.post("/api/books/upload", isAuthenticated, upload.single("file"), async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = LOCAL_USER_ID;
       const file = req.file;
       if (!file) return res.status(400).json({ message: "No file uploaded" });
 
@@ -112,9 +152,9 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/books", isAuthenticated, async (req: any, res) => {
+  app.get("/api/books", isAuthenticated, async (_req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = LOCAL_USER_ID;
       const userBooks = await storage.getBooksByUser(userId);
       res.json(userBooks);
     } catch (error: any) {
@@ -124,7 +164,7 @@ export async function registerRoutes(
 
   app.get("/api/books/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = LOCAL_USER_ID;
       const id = parseInt(req.params.id);
       const book = await storage.getBook(id, userId);
       if (!book) return res.status(404).json({ message: "Book not found" });
@@ -136,7 +176,7 @@ export async function registerRoutes(
 
   app.get("/api/books/:id/file", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = LOCAL_USER_ID;
       const id = parseInt(req.params.id);
       const book = await storage.getBook(id, userId);
       if (!book) return res.status(404).json({ message: "Book not found" });
@@ -155,7 +195,7 @@ export async function registerRoutes(
 
   app.patch("/api/books/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = LOCAL_USER_ID;
       const id = parseInt(req.params.id);
       const parsed = updatePositionSchema.parse(req.body);
 
@@ -175,7 +215,7 @@ export async function registerRoutes(
 
   app.delete("/api/books/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = LOCAL_USER_ID;
       const id = parseInt(req.params.id);
       const book = await storage.getBook(id, userId);
       if (book) {
@@ -203,19 +243,13 @@ export async function registerRoutes(
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
 
-      const stream = anthropic.messages.stream({
-        model: "claude-sonnet-4-5",
-        max_tokens: 2048,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userMessage }],
-      });
+      const model = genai.getGenerativeModel({ model: "gemini-2.5-flash", systemInstruction: systemPrompt });
+      const stream = await model.generateContentStream(userMessage);
 
-      for await (const event of stream) {
-        if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-          const content = event.delta.text;
-          if (content) {
-            res.write(`data: ${JSON.stringify({ content })}\n\n`);
-          }
+      for await (const chunk of stream.stream) {
+        const content = chunk.text();
+        if (content) {
+          res.write(`data: ${JSON.stringify({ content })}\n\n`);
         }
       }
 
@@ -237,7 +271,7 @@ export async function registerRoutes(
 
   app.post("/api/ai/save-vocab", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = LOCAL_USER_ID;
       const parsed = saveVocabSchema.parse(req.body);
       const { text, context, type, bookId, chapter } = parsed;
 
@@ -250,25 +284,16 @@ export async function registerRoutes(
         ? `Context from book: "${context}"\n\nSelected ${type}: "${text}"`
         : `Selected ${type}: "${text}"`;
 
-      const response = await anthropic.messages.create({
-        model: "claude-haiku-4-5",
-        max_tokens: 1024,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userMessage }],
-      });
+      const vocabModel = genai.getGenerativeModel({ model: "gemini-2.5-flash", systemInstruction: systemPrompt });
+      const response = await vocabModel.generateContent(userMessage);
 
       let aiData: any = {};
-      const textContent = response.content[0];
-      if (textContent.type === "text") {
-        let rawText = textContent.text.trim();
-        rawText = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
-        rawText = rawText.trim();
-
-        try {
-          aiData = JSON.parse(rawText);
-        } catch {
-          aiData = { translation: rawText };
-        }
+      let rawText = response.response.text().trim();
+      rawText = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+      try {
+        aiData = JSON.parse(rawText);
+      } catch {
+        aiData = { translation: rawText };
       }
 
       const vocabItem = await storage.createVocabItem({
@@ -297,9 +322,9 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/vocab", isAuthenticated, async (req: any, res) => {
+  app.get("/api/vocab", isAuthenticated, async (_req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = LOCAL_USER_ID;
       const items = await storage.getVocabItems(userId);
       res.json(items);
     } catch (error: any) {
@@ -309,7 +334,7 @@ export async function registerRoutes(
 
   app.delete("/api/vocab/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = LOCAL_USER_ID;
       const id = parseInt(req.params.id);
       await storage.deleteVocabItem(id, userId);
       res.status(204).send();
@@ -320,7 +345,7 @@ export async function registerRoutes(
 
   app.post("/api/vocab/:id/review", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = LOCAL_USER_ID;
       const id = parseInt(req.params.id);
       const parsed = reviewSchema.parse(req.body);
       const updated = await storage.updateVocabReview(id, userId, parsed.correct);

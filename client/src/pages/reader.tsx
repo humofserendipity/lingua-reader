@@ -20,8 +20,10 @@ export default function ReaderPage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiAction, setAiAction] = useState("");
   const [toolbarVisible, setToolbarVisible] = useState(false);
+  const [toolbarCoords, setToolbarCoords] = useState<{ x: number; y: number } | undefined>();
   const [panelWidth, setPanelWidth] = useState(380);
   const [currentChapter, setCurrentChapter] = useState("");
+  const lastPositionRef = useRef<{ position: string; chapter?: string } | null>(null);
   const isDraggingRef = useRef(false);
   const dragStartXRef = useRef(0);
   const dragStartWidthRef = useRef(0);
@@ -41,16 +43,35 @@ export default function ReaderPage() {
     },
   });
 
-  const handleTextSelect = useCallback((text: string, ctx: string) => {
+  const handleTextSelect = useCallback((text: string, ctx: string, coords?: { x: number; y: number }) => {
     setSelectedText(text);
     setContext(ctx);
+    setToolbarCoords(coords);
     setToolbarVisible(true);
   }, []);
 
   const handlePositionChange = useCallback((position: string, chapter?: string) => {
     if (chapter) setCurrentChapter(chapter);
+    lastPositionRef.current = { position, chapter };
     savePositionMutation.mutate({ position, chapter });
   }, [savePositionMutation]);
+
+  // Save position on page exit (beforeunload)
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      const last = lastPositionRef.current;
+      if (!bookId || !last) return;
+      navigator.sendBeacon(
+        `/api/books/${bookId}`,
+        new Blob(
+          [JSON.stringify({ currentPosition: last.position, currentChapter: last.chapter })],
+          { type: "application/json" }
+        )
+      );
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [bookId]);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -219,14 +240,22 @@ export default function ReaderPage() {
         />
 
         {toolbarVisible && (
-          <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center pb-6 pointer-events-none">
-            <div className="pointer-events-auto">
-              <FloatingToolbar
-                onAction={handleAction}
-                onDismiss={() => setToolbarVisible(false)}
-              />
+          toolbarCoords ? (
+            <FloatingToolbar
+              onAction={handleAction}
+              onDismiss={() => setToolbarVisible(false)}
+              coords={toolbarCoords}
+            />
+          ) : (
+            <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center pb-6 pointer-events-none">
+              <div className="pointer-events-auto">
+                <FloatingToolbar
+                  onAction={handleAction}
+                  onDismiss={() => setToolbarVisible(false)}
+                />
+              </div>
             </div>
-          </div>
+          )
         )}
       </div>
 

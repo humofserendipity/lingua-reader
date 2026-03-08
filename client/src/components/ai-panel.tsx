@@ -1,16 +1,24 @@
 import { useState, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
-import { Languages, BookText, GraduationCap, BookmarkPlus, Loader2, X, BookOpen, Sparkles, Save, ChevronDown, ChevronRight } from "lucide-react";
+import { Languages, BookText, GraduationCap, BookmarkPlus, X, BookOpen, Sparkles, Save, ChevronDown, ChevronRight, ALargeSmall } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Slider } from "@/components/ui/slider";
+import { Label } from "@/components/ui/label";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { VocabItem } from "@shared/schema";
+
+const LS_PANEL_FONT = "ai-panel:fontSize";
+function getSavedPanelFont(): number {
+  try { return JSON.parse(localStorage.getItem(LS_PANEL_FONT) || "14"); } catch { return 14; }
+}
 
 interface AIPanelProps {
   bookId?: number;
@@ -37,7 +45,13 @@ export function AIPanel({
 }: AIPanelProps) {
   const [activeTab, setActiveTab] = useState("ai");
   const [collapsedChapters, setCollapsedChapters] = useState<Set<string>>(new Set());
+  const [panelFontSize, setPanelFontSize] = useState<number>(getSavedPanelFont);
   const { toast } = useToast();
+
+  const handlePanelFontChange = (v: number) => {
+    setPanelFontSize(v);
+    localStorage.setItem(LS_PANEL_FONT, JSON.stringify(v));
+  };
 
   const { data: vocabItems = [], isLoading: vocabLoading } = useQuery<VocabItem[]>({
     queryKey: ["/api/vocab"],
@@ -123,14 +137,33 @@ export function AIPanel({
               Vocab ({vocabItems.length})
             </TabsTrigger>
           </TabsList>
-          <Button size="icon" variant="ghost" onClick={onClose} data-testid="button-close-panel">
-            <X className="w-4 h-4" />
-          </Button>
+          <div className="flex items-center gap-1">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button size="icon" variant="ghost" title="Text size" data-testid="button-panel-font-size">
+                  <ALargeSmall className="w-4 h-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-48 space-y-3">
+                <Label className="text-xs font-medium">Text Size: {panelFontSize}px</Label>
+                <Slider
+                  min={11}
+                  max={20}
+                  step={1}
+                  value={[panelFontSize]}
+                  onValueChange={([v]) => handlePanelFontChange(v)}
+                />
+              </PopoverContent>
+            </Popover>
+            <Button size="icon" variant="ghost" onClick={onClose} data-testid="button-close-panel">
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
         </div>
 
         <TabsContent value="ai" className="flex-1 mt-0 overflow-hidden">
           <ScrollArea className="h-full">
-            <div className="p-4 space-y-4">
+            <div className="p-4 space-y-4" style={{ fontSize: panelFontSize }}>
               {selectedText && (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">

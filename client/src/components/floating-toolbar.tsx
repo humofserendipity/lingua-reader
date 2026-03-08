@@ -1,3 +1,4 @@
+import type React from "react";
 import { Languages, BookText, GraduationCap, BookmarkPlus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -6,12 +7,18 @@ export type AIAction = "translate" | "quick-grammar" | "deep-grammar" | "save-wo
 interface FloatingToolbarProps {
   onAction: (action: AIAction) => void;
   onDismiss: () => void;
+  coords?: { x: number; y: number };
 }
 
-export function FloatingToolbar({ onAction, onDismiss }: FloatingToolbarProps) {
+export function FloatingToolbar({ onAction, onDismiss, coords }: FloatingToolbarProps) {
+  const style: React.CSSProperties = coords
+    ? { position: "fixed", left: coords.x, top: coords.y + 8, transform: "translateX(-50%)" }
+    : {};
+
   return (
     <div
-      className="flex items-center gap-1 rounded-lg border bg-popover p-1.5 shadow-lg"
+      className="flex items-center gap-1 rounded-lg border bg-popover p-1.5 shadow-lg z-50"
+      style={style}
       data-testid="floating-toolbar"
     >
       <Button

@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import ePub, { type Book as EpubBook, type Rendition } from "epubjs";
-import { ChevronLeft, ChevronRight, ArrowLeft, Settings, BookOpen, Columns2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, ArrowLeft, Settings, Columns2, List, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { useTheme } from "@/lib/theme-provider";
 import { Link } from "wouter";
 
@@ -15,12 +17,23 @@ const FONT_FAMILIES = [
   { value: "monospace", label: "Monospace", css: "'JetBrains Mono', 'Fira Code', monospace" },
 ];
 
+const LS_PREFIX = "epub-reader:";
+function getSaved<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(LS_PREFIX + key);
+    if (raw === null) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 interface EpubReaderProps {
   bookUrl: string;
   bookTitle?: string;
   initialPosition?: string;
   onPositionChange?: (position: string, chapter?: string) => void;
-  onTextSelect?: (text: string, context: string) => void;
+  onTextSelect?: (text: string, context: string, coords?: { x: number; y: number }) => void;
 }
 
 export function EpubReader({
@@ -33,18 +46,30 @@ export function EpubReader({
   const viewerRef = useRef<HTMLDivElement>(null);
   const bookRef = useRef<EpubBook | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
-  const [fontSize, setFontSize] = useState(100);
-  const [fontFamily, setFontFamily] = useState("serif");
+  const currentCfiRef = useRef<string>("");
+
+  const [fontSize, setFontSize] = useState<number>(() => getSaved("fontSize", 100));
+  const [fontFamily, setFontFamily] = useState<string>(() => getSaved("fontFamily", "serif"));
+  const [doublePage, setDoublePage] = useState<boolean>(() => getSaved("doublePage", false));
   const [currentChapter, setCurrentChapter] = useState("");
   const [atStart, setAtStart] = useState(true);
   const [atEnd, setAtEnd] = useState(false);
   const [showControls, setShowControls] = useState(false);
   const [bookLoaded, setBookLoaded] = useState(false);
-  const [doublePage, setDoublePage] = useState(false);
+  const [tocItems, setTocItems] = useState<Array<{ id: string; label: string; href: string; level: number }>>([]);
+  const [tocOpen, setTocOpen] = useState(false);
+  const [spinePosition, setSpinePosition] = useState<{ current: number; total: number } | null>(null);
+
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wheelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wheelLockedRef = useRef(false);
+  const resizeRestoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { theme } = useTheme();
+
+  // Persist settings to localStorage
+  useEffect(() => { localStorage.setItem(LS_PREFIX + "fontSize", JSON.stringify(fontSize)); }, [fontSize]);
+  useEffect(() => { localStorage.setItem(LS_PREFIX + "fontFamily", JSON.stringify(fontFamily)); }, [fontFamily]);
+  useEffect(() => { localStorage.setItem(LS_PREFIX + "doublePage", JSON.stringify(doublePage)); }, [doublePage]);
 
   const getFontCss = useCallback((family: string) => {
     return FONT_FAMILIES.find(f => f.value === family)?.css || FONT_FAMILIES[0].css;
@@ -68,7 +93,6 @@ export function EpubReader({
 
   useEffect(() => {
     if (!viewerRef.current) return;
-
     let destroyed = false;
 
     async function loadBook() {
@@ -89,21 +113,16 @@ export function EpubReader({
         spread: "none",
         flow: "paginated",
       });
-
       renditionRef.current = rendition;
 
       rendition.themes.default({
         body: {
-          "font-family": `${getFontCss("serif")} !important`,
+          "font-family": `${getFontCss(fontFamily)} !important`,
           "line-height": "1.8 !important",
           "padding": "20px 40px !important",
         },
-        "p": {
-          "margin-bottom": "0.8em !important",
-        },
-        "a": {
-          "color": "inherit !important",
-        },
+        "p": { "margin-bottom": "0.8em !important" },
+        "a": { "color": "inherit !important" },
       });
 
       rendition.themes.fontSize(`${fontSize}%`);
@@ -115,14 +134,46 @@ export function EpubReader({
         rendition.display();
       }
 
+      // Load TOC
+      book.loaded.navigation.then((nav) => {
+        if (destroyed) return;
+        const flattenToc = (items: any[], level = 0): Array<{ id: string; label: string; href: string; level: number }> => {
+          const result: Array<{ id: string; label: string; href: string; level: number }> = [];
+          for (const item of items) {
+            result.push({ id: item.id || item.href, label: item.label?.trim() || item.href, href: item.href, level });
+            if (item.subitems?.length) result.push(...flattenToc(item.subitems, level + 1));
+          }
+          return result;
+        };
+        setTocItems(flattenToc(nav.toc));
+      });
+
       rendition.on("relocated", (location: any) => {
+        if (destroyed) return;
         const cfi = location.start.cfi;
+        currentCfiRef.current = cfi;
         setAtStart(location.atStart);
         setAtEnd(location.atEnd);
 
+        // Spine position indicator
+        try {
+          const spine = (book as any).spine;
+          if (spine) {
+            const spineItem = spine.get(location.start.href);
+            if (spineItem !== null && spineItem !== undefined) {
+              const idx = typeof spineItem === "object" ? spineItem.index : spineItem;
+              const total = spine.items?.length || spine.length || 0;
+              if (typeof idx === "number" && total > 0) {
+                setSpinePosition({ current: idx + 1, total });
+              }
+            }
+          }
+        } catch { /* ignore */ }
+
         book.loaded.navigation.then((nav) => {
+          if (destroyed) return;
           const chapter = nav.toc.find((item: any) => {
-            return book.canonical(item.href) === book.canonical(location.start.href);
+            try { return book.canonical(item.href) === book.canonical(location.start.href); } catch { return false; }
           });
           const chapterTitle = chapter?.label?.trim() || "";
           setCurrentChapter(chapterTitle);
@@ -130,67 +181,94 @@ export function EpubReader({
         });
       });
 
-      rendition.on("selected", (cfiRange: string) => {
+      rendition.on("selected", (cfiRange: string, contents: any) => {
         try {
           const range = rendition.getRange(cfiRange);
           if (!range) return;
           const selectedText = range.toString().trim();
           if (!selectedText) return;
           const surrounding = getSurroundingContext(range);
-          onTextSelect?.(selectedText, surrounding);
+
+          // Compute coords relative to the viewport
+          let coords: { x: number; y: number } | undefined;
+          try {
+            const iframeEl = container.querySelector("iframe");
+            if (iframeEl) {
+              const iframeRect = iframeEl.getBoundingClientRect();
+              const selRects = range.getClientRects();
+              if (selRects.length > 0) {
+                const lastRect = selRects[selRects.length - 1];
+                coords = {
+                  x: iframeRect.left + lastRect.right,
+                  y: iframeRect.top + lastRect.bottom,
+                };
+              }
+            }
+          } catch { /* ignore */ }
+
+          onTextSelect?.(selectedText, surrounding, coords);
         } catch (err) {
           console.error("Selection error:", err);
         }
       });
 
+      // Register iframe content hooks
       rendition.hooks.content.register((contents: any) => {
         const doc = contents.document;
         if (!doc) return;
 
+        // Wheel navigation
         const handleWheel = (e: WheelEvent) => {
           const sel = doc.getSelection?.();
           if (sel && sel.toString().trim().length > 0) return;
-
           e.preventDefault();
           if (wheelLockedRef.current) return;
           wheelLockedRef.current = true;
-
-          if (e.deltaY > 0) {
-            renditionRef.current?.next();
-          } else if (e.deltaY < 0) {
-            renditionRef.current?.prev();
-          }
-
+          if (e.deltaY > 0) renditionRef.current?.next();
+          else if (e.deltaY < 0) renditionRef.current?.prev();
           if (wheelTimerRef.current) clearTimeout(wheelTimerRef.current);
-          wheelTimerRef.current = setTimeout(() => {
-            wheelLockedRef.current = false;
-          }, 400);
+          wheelTimerRef.current = setTimeout(() => { wheelLockedRef.current = false; }, 400);
+        };
+
+        // Keyboard navigation inside iframe
+        const handleKeyDown = (e: KeyboardEvent) => {
+          if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+            e.preventDefault();
+            if (e.key === "ArrowLeft") renditionRef.current?.prev();
+            else renditionRef.current?.next();
+          }
         };
 
         doc.addEventListener("wheel", handleWheel, { passive: false });
+        doc.addEventListener("keydown", handleKeyDown);
 
         if (contents.on) {
           contents.on("unload", () => {
             doc.removeEventListener("wheel", handleWheel);
+            doc.removeEventListener("keydown", handleKeyDown);
           });
         }
       });
 
       setBookLoaded(true);
 
+      // ResizeObserver — save CFI before resize, restore after
       const resizeObserver = new ResizeObserver((entries) => {
         for (const entry of entries) {
           const { width, height } = entry.contentRect;
           if (width > 0 && height > 0 && renditionRef.current) {
-            try {
-              renditionRef.current.resize(width, height);
-            } catch {
+            const savedCfi = currentCfiRef.current;
+            try { renditionRef.current.resize(width, height); } catch { /* ignore */ }
+            if (savedCfi) {
+              if (resizeRestoreTimerRef.current) clearTimeout(resizeRestoreTimerRef.current);
+              resizeRestoreTimerRef.current = setTimeout(() => {
+                try { renditionRef.current?.display(savedCfi); } catch { /* ignore */ }
+              }, 150);
             }
           }
         }
       });
       resizeObserver.observe(container);
-
       (book as any)._resizeObserver = resizeObserver;
     }
 
@@ -198,6 +276,7 @@ export function EpubReader({
 
     return () => {
       destroyed = true;
+      if (resizeRestoreTimerRef.current) clearTimeout(resizeRestoreTimerRef.current);
       const book = bookRef.current;
       if (book) {
         const observer = (book as any)._resizeObserver;
@@ -209,32 +288,20 @@ export function EpubReader({
   }, [bookUrl]);
 
   useEffect(() => {
-    if (renditionRef.current) {
-      applyTheme(renditionRef.current);
-    }
+    if (renditionRef.current) applyTheme(renditionRef.current);
   }, [theme, applyTheme]);
 
   useEffect(() => {
-    if (renditionRef.current) {
-      renditionRef.current.themes.fontSize(`${fontSize}%`);
-    }
+    if (renditionRef.current) renditionRef.current.themes.fontSize(`${fontSize}%`);
   }, [fontSize]);
 
   useEffect(() => {
     if (renditionRef.current) {
       const css = getFontCss(fontFamily);
       renditionRef.current.themes.register("custom-font", {
-        body: {
-          "font-family": `${css} !important`,
-          "line-height": "1.8 !important",
-          "padding": "20px 40px !important",
-        },
-        "p": {
-          "margin-bottom": "0.8em !important",
-        },
-        "a": {
-          "color": "inherit !important",
-        },
+        body: { "font-family": `${css} !important`, "line-height": "1.8 !important", "padding": "20px 40px !important" },
+        "p": { "margin-bottom": "0.8em !important" },
+        "a": { "color": "inherit !important" },
       });
       renditionRef.current.themes.select("custom-font");
       renditionRef.current.themes.fontSize(`${fontSize}%`);
@@ -244,16 +311,14 @@ export function EpubReader({
 
   useEffect(() => {
     if (!renditionRef.current || !bookRef.current) return;
-    const rendition = renditionRef.current;
     try {
-      (rendition as any).spread(doublePage ? "auto" : "none");
+      (renditionRef.current as any).spread(doublePage ? "auto" : "none");
       const container = viewerRef.current;
       if (container) {
         const rect = container.getBoundingClientRect();
-        rendition.resize(rect.width, rect.height);
+        renditionRef.current.resize(rect.width, rect.height);
       }
-    } catch {
-    }
+    } catch { /* ignore */ }
   }, [doublePage]);
 
   function getSurroundingContext(range: Range): string {
@@ -276,6 +341,7 @@ export function EpubReader({
     showControlsTemporarily();
   }, [showControlsTemporarily]);
 
+  // Window-level keyboard handler (for when focus is outside iframe)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "ArrowLeft") goPrev();
@@ -286,9 +352,7 @@ export function EpubReader({
   }, [goNext, goPrev]);
 
   useEffect(() => {
-    return () => {
-      if (wheelTimerRef.current) clearTimeout(wheelTimerRef.current);
-    };
+    return () => { if (wheelTimerRef.current) clearTimeout(wheelTimerRef.current); };
   }, []);
 
   const handleAreaClick = (e: React.MouseEvent) => {
@@ -297,20 +361,21 @@ export function EpubReader({
     const rect = container.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const width = rect.width;
+    if (x < width * 0.25) goPrev();
+    else if (x > width * 0.75) goNext();
+    else showControlsTemporarily();
+  };
 
-    if (x < width * 0.25) {
-      goPrev();
-    } else if (x > width * 0.75) {
-      goNext();
-    } else {
-      showControlsTemporarily();
-    }
+  const navigateToToc = (href: string) => {
+    renditionRef.current?.display(href);
+    setTocOpen(false);
   };
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className="flex flex-col h-full bg-background overflow-hidden">
+      {/* Top toolbar */}
       <div
-        className={`flex items-center justify-between gap-4 px-3 py-1.5 border-b bg-card/80 backdrop-blur-sm transition-opacity duration-300 z-20 ${showControls || !bookLoaded ? "opacity-100" : "opacity-0 hover:opacity-100"}`}
+        className={`shrink-0 flex items-center justify-between gap-4 px-3 py-1.5 border-b bg-card/80 backdrop-blur-sm transition-opacity duration-300 z-20 ${showControls || !bookLoaded ? "opacity-100" : "opacity-0 hover:opacity-100"}`}
       >
         <div className="flex items-center gap-2 min-w-0">
           <Link href="/">
@@ -323,6 +388,17 @@ export function EpubReader({
           </span>
         </div>
         <div className="flex items-center gap-1">
+          {/* TOC button */}
+          <Button
+            size="icon"
+            variant={tocOpen ? "default" : "ghost"}
+            onClick={() => setTocOpen(!tocOpen)}
+            data-testid="button-toc"
+            title="Table of Contents"
+          >
+            <List className="w-4 h-4" />
+          </Button>
+
           <Button
             size="icon"
             variant={doublePage ? "default" : "ghost"}
@@ -332,6 +408,9 @@ export function EpubReader({
           >
             <Columns2 className="w-4 h-4" />
           </Button>
+
+          <ThemeToggle />
+
           <Popover>
             <PopoverTrigger asChild>
               <Button size="icon" variant="ghost" data-testid="button-reader-settings">
@@ -370,7 +449,37 @@ export function EpubReader({
         </div>
       </div>
 
-      <div className="flex-1 relative overflow-hidden" onClick={handleAreaClick}>
+      {/* TOC dropdown */}
+      {tocOpen && (
+        <div className="shrink-0 absolute top-10 left-0 right-0 z-30 bg-card border-b shadow-lg flex flex-col" style={{ maxHeight: "min(16rem, 60vh)" }}>
+          <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b">
+            <span className="text-xs font-semibold">Table of Contents</span>
+            <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setTocOpen(false)}>
+              <X className="w-3 h-3" />
+            </Button>
+          </div>
+          <ScrollArea className="min-h-0 flex-1 overflow-auto">
+            <div className="py-1">
+              {tocItems.map((item) => (
+                <button
+                  key={item.id}
+                  className="w-full text-left px-3 py-1.5 text-sm hover:bg-muted/60 transition-colors"
+                  style={{ paddingLeft: `${12 + item.level * 16}px` }}
+                  onClick={() => navigateToToc(item.href)}
+                >
+                  {item.label}
+                </button>
+              ))}
+              {tocItems.length === 0 && (
+                <p className="px-3 py-2 text-xs text-muted-foreground">No chapters found</p>
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+      )}
+
+      {/* Reader area */}
+      <div className="flex-1 relative overflow-hidden min-h-0" onClick={handleAreaClick}>
         <div ref={viewerRef} className="w-full h-full" data-testid="epub-viewer" />
 
         <button
@@ -395,6 +504,15 @@ export function EpubReader({
           <ChevronRight className="w-6 h-6 text-muted-foreground" />
         </button>
       </div>
+
+      {/* Bottom location bar */}
+      {spinePosition && (
+        <div className="shrink-0 flex items-center justify-center py-1 border-t bg-card/60">
+          <span className="text-xs text-muted-foreground">
+            Section {spinePosition.current} / {spinePosition.total}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
