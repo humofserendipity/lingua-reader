@@ -9,6 +9,10 @@ import fs from "fs";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { z } from "zod";
 
+import type { Book } from "@shared/schema";
+
+const serializeBook = ({ fileContent: _, ...book }: Book) => book;
+
 // Local dev: auth disabled — all requests treated as a single local user
 const LOCAL_USER_ID = "local-user";
 const isAuthenticated = (_req: Request, _res: Response, next: NextFunction) => next();
@@ -135,17 +139,21 @@ export async function registerRoutes(
       if (!file) return res.status(400).json({ message: "No file uploaded" });
 
       const originalName = file.originalname.replace(/\.epub$/i, "");
+      const fileBuffer = await fs.promises.readFile(file.path);
+      const fileContent = fileBuffer.toString("base64");
+      await fs.promises.unlink(file.path);
       const book = await storage.createBook({
         userId,
         title: originalName,
         author: null,
         fileType: "epub",
         fileName: file.filename,
+        fileContent,
         currentPosition: null,
         currentChapter: null,
       });
 
-      res.json(book);
+      res.json(serializeBook(book));
     } catch (error: any) {
       console.error("Upload error:", error);
       res.status(500).json({ message: error.message || "Upload failed" });
@@ -156,7 +164,7 @@ export async function registerRoutes(
     try {
       const userId = LOCAL_USER_ID;
       const userBooks = await storage.getBooksByUser(userId);
-      res.json(userBooks);
+      res.json(userBooks.map(serializeBook));
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -168,7 +176,7 @@ export async function registerRoutes(
       const id = parseInt(req.params.id);
       const book = await storage.getBook(id, userId);
       if (!book) return res.status(404).json({ message: "Book not found" });
-      res.json(book);
+      res.json(serializeBook(book));
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -181,13 +189,13 @@ export async function registerRoutes(
       const book = await storage.getBook(id, userId);
       if (!book) return res.status(404).json({ message: "Book not found" });
 
-      const filePath = path.join(uploadDir, book.fileName);
-      if (!fs.existsSync(filePath)) {
-        return res.status(404).json({ message: "File not found on disk" });
+      if (!book.fileContent) {
+        return res.status(404).json({ message: "File content missing — please re-upload this book" });
       }
 
+      const buffer = Buffer.from(book.fileContent, "base64");
       res.setHeader("Content-Type", "application/epub+zip");
-      res.sendFile(filePath);
+      res.send(buffer);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -195,16 +203,12 @@ export async function registerRoutes(
 
   app.patch("/api/books/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = LOCAL_USER_ID;
       const id = parseInt(req.params.id);
       const parsed = updatePositionSchema.parse(req.body);
 
-      const book = await storage.getBook(id, userId);
-      if (!book) return res.status(404).json({ message: "Book not found" });
-
       const updated = await storage.updateBookPosition(id, parsed.currentPosition, parsed.currentChapter);
       if (!updated) return res.status(404).json({ message: "Book not found" });
-      res.json(updated);
+      res.json(serializeBook(updated));
     } catch (error: any) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: error.errors[0].message });
@@ -243,7 +247,7 @@ export async function registerRoutes(
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
 
-      const model = genai.getGenerativeModel({ model: "gemini-2.5-flash", systemInstruction: systemPrompt });
+      const model = genai.getGenerativeModel({ model: "gemini-1.5-flash", systemInstruction: systemPrompt });
       const stream = await model.generateContentStream(userMessage);
 
       for await (const chunk of stream.stream) {
@@ -284,7 +288,7 @@ export async function registerRoutes(
         ? `Context from book: "${context}"\n\nSelected ${type}: "${text}"`
         : `Selected ${type}: "${text}"`;
 
-      const vocabModel = genai.getGenerativeModel({ model: "gemini-2.5-flash", systemInstruction: systemPrompt });
+      const vocabModel = genai.getGenerativeModel({ model: "gemini-1.5-flash", systemInstruction: systemPrompt });
       const response = await vocabModel.generateContent(userMessage);
 
       let aiData: any = {};

@@ -34,6 +34,7 @@ interface EpubReaderProps {
   initialPosition?: string;
   onPositionChange?: (position: string, chapter?: string) => void;
   onTextSelect?: (text: string, context: string, coords?: { x: number; y: number }) => void;
+  onError?: (message: string) => void;
 }
 
 export function EpubReader({
@@ -42,6 +43,7 @@ export function EpubReader({
   initialPosition,
   onPositionChange,
   onTextSelect,
+  onError,
 }: EpubReaderProps) {
   const viewerRef = useRef<HTMLDivElement>(null);
   const bookRef = useRef<EpubBook | null>(null);
@@ -99,20 +101,33 @@ export function EpubReader({
     const isMobile = isMobileRef.current;
 
     async function loadBook() {
-      const response = await fetch(bookUrl, { credentials: "include" });
-      if (!response.ok || destroyed) return;
+      let response: Response;
+      try {
+        response = await fetch(bookUrl, { credentials: "include" });
+      } catch {
+        if (!destroyed) onError?.("Network error — could not reach server");
+        return;
+      }
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        if (!destroyed) onError?.(data.message ?? "Failed to load book");
+        return;
+      }
+      if (destroyed) return;
       const arrayBuffer = await response.arrayBuffer();
       if (destroyed || !viewerRef.current) return;
 
       const container = viewerRef.current;
       const rect = container.getBoundingClientRect();
+      const width = isMobile ? window.innerWidth : rect.width;
+      const height = isMobile ? window.innerHeight : rect.height;
 
       const book = ePub(arrayBuffer);
       bookRef.current = book;
 
       const rendition = book.renderTo(container, isMobile
-        ? { width: rect.width, height: rect.height, flow: "scrolled", manager: "continuous" }
-        : { width: rect.width, height: rect.height, spread: "none", flow: "paginated" }
+        ? { width, height, flow: "scrolled", manager: "continuous" }
+        : { width, height, spread: "none", flow: "paginated" }
       );
       renditionRef.current = rendition;
 
@@ -128,6 +143,12 @@ export function EpubReader({
 
       rendition.themes.fontSize(`${fontSize}%`);
       applyTheme(rendition);
+
+      // Suppress position-save callbacks fired by display(initialPosition).
+      // epubjs fires "relocated" 1-2 times during restore; without this guard
+      // those events overwrite the correct saved position with the chapter start.
+      // Use a time-based guard so we don't need to know the exact event count.
+      const restoreGuardUntil = initialPosition ? Date.now() + 1500 : null;
 
       if (initialPosition) {
         rendition.display(initialPosition);
@@ -178,8 +199,9 @@ export function EpubReader({
           });
           const chapterTitle = chapter?.label?.trim() || "";
           setCurrentChapter(chapterTitle);
+          if (restoreGuardUntil !== null && Date.now() < restoreGuardUntil) return;
           onPositionChange?.(cfi, chapterTitle);
-        });
+        }).catch(() => {});
       });
 
       rendition.on("selected", (cfiRange: string) => {
@@ -245,14 +267,50 @@ export function EpubReader({
           );
         }
 
+        // Mobile: listen to selectionchange since touch doesn't fire mouseup
+        if (isMobile) {
+          let selectionTimer: ReturnType<typeof setTimeout> | null = null;
+          const handleSelectionChange = () => {
+            if (selectionTimer) clearTimeout(selectionTimer);
+            selectionTimer = setTimeout(() => {
+              try {
+                const sel = doc.getSelection();
+                if (!sel || sel.rangeCount === 0) return;
+                const selectedText = sel.toString().trim();
+                if (!selectedText) return;
+                const range = sel.getRangeAt(0);
+                const surrounding = getSurroundingContext(range);
+                let coords: { x: number; y: number } | undefined;
+                try {
+                  const iframeEl = container.querySelector("iframe");
+                  if (iframeEl) {
+                    const iframeRect = iframeEl.getBoundingClientRect();
+                    const selRects = range.getClientRects();
+                    if (selRects.length > 0) {
+                      const lastRect = selRects[selRects.length - 1];
+                      coords = { x: iframeRect.left + lastRect.right, y: iframeRect.top + lastRect.bottom };
+                    }
+                  }
+                } catch { /* ignore */ }
+                onTextSelect?.(selectedText, surrounding, coords);
+              } catch { /* ignore */ }
+            }, 225);
+          };
+          doc.addEventListener("selectionchange", handleSelectionChange);
+          cleanup.push(() => {
+            doc.removeEventListener("selectionchange", handleSelectionChange);
+            if (selectionTimer) clearTimeout(selectionTimer);
+          });
+        }
+
         if (contents.on) {
           contents.on("unload", () => cleanup.forEach(fn => fn()));
         }
       });
 
-      // On mobile, show controls when user scrolls in the viewer container
+      // On mobile, show controls when user touches the viewer container
       if (isMobile) {
-        container.addEventListener("scroll", showControlsTemporarily, { passive: true });
+        container.addEventListener("touchstart", showControlsTemporarily, { passive: true });
       }
 
       setBookLoaded(true);
@@ -288,11 +346,14 @@ export function EpubReader({
     return () => {
       destroyed = true;
       if (resizeRestoreTimerRef.current) clearTimeout(resizeRestoreTimerRef.current);
+      if (viewerRef.current) viewerRef.current.innerHTML = "";
       const book = bookRef.current;
+      bookRef.current = null;
+      renditionRef.current = null;
       if (book) {
         const observer = (book as any)._resizeObserver;
         if (observer) observer.disconnect();
-        book.destroy();
+        try { book.destroy(); } catch { /* ignore */ }
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -328,6 +389,13 @@ export function EpubReader({
       if (container) {
         const rect = container.getBoundingClientRect();
         renditionRef.current.resize(rect.width, rect.height);
+      }
+      if (currentCfiRef.current) {
+        const cfi = currentCfiRef.current;
+        setTimeout(() => {
+          try { (renditionRef.current as any).views().destroy(); } catch { /* ignore */ }
+          renditionRef.current?.display(cfi);
+        }, 300);
       }
     } catch { /* ignore */ }
   }, [doublePage]);
@@ -496,12 +564,12 @@ export function EpubReader({
 
       {/* Reader area */}
       <div
-        className={`flex-1 relative min-h-0 ${isMobile ? "overflow-y-auto" : "overflow-hidden"}`}
+        className="flex-1 relative min-h-0 overflow-hidden"
         onClick={handleAreaClick}
       >
         <div
           ref={viewerRef}
-          className={isMobile ? "w-full" : "w-full h-full"}
+          className="w-full h-full"
           data-testid="epub-viewer"
         />
 

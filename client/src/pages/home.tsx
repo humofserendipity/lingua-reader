@@ -44,9 +44,9 @@ export default function Home() {
     : "U";
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background overflow-x-hidden">
       <header className="sticky top-0 z-50 border-b backdrop-blur-md bg-background/80">
-        <div className="max-w-5xl mx-auto px-6 h-14 flex items-center justify-between gap-4">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <BookOpen className="w-5 h-5 text-primary" />
             <span className="font-serif text-lg font-semibold tracking-tight">LinguaReader</span>
@@ -77,7 +77,7 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-6 py-8 space-y-8">
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-8">
         <div className="space-y-1">
           <h1 className="font-serif text-2xl font-bold tracking-tight" data-testid="text-welcome">
             Welcome back{user?.firstName ? `, ${user.firstName}` : ""}

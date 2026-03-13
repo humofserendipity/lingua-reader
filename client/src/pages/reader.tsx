@@ -6,7 +6,9 @@ import { FloatingToolbar, type AIAction } from "@/components/floating-toolbar";
 import { AIPanel } from "@/components/ai-panel";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, BookOpen } from "lucide-react";
+import { Loader2, BookOpen, AlertCircle } from "lucide-react";
+import { useLocation } from "wouter";
+import { Button } from "@/components/ui/button";
 import type { Book } from "@shared/schema";
 
 export default function ReaderPage() {
@@ -29,11 +31,30 @@ export default function ReaderPage() {
   const dragStartXRef = useRef(0);
   const dragStartWidthRef = useRef(0);
   const { toast } = useToast();
+  const [, navigate] = useLocation();
+  const [fileError, setFileError] = useState<string | null>(null);
 
   const { data: book, isLoading } = useQuery<Book>({
     queryKey: ["/api/books", bookId],
     enabled: !!bookId,
   });
+
+  const updatePositionCache = useCallback((position: string, chapter?: string) => {
+    queryClient.setQueryData(["/api/books", bookId], (old: Book | undefined) => {
+      if (!old) return old;
+      return { ...old, currentPosition: position, currentChapter: chapter ?? old.currentChapter };
+    });
+  }, [bookId]);
+
+  const persistPositionFetch = useCallback((position: string, chapter?: string) => {
+    fetch(`/api/books/${bookId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ currentPosition: position, currentChapter: chapter }),
+      keepalive: true,
+      credentials: "include",
+    });
+  }, [bookId]);
 
   const savePositionMutation = useMutation({
     mutationFn: async ({ position, chapter }: { position: string; chapter?: string }) => {
@@ -42,6 +63,7 @@ export default function ReaderPage() {
         currentChapter: chapter,
       });
     },
+    onSuccess: (_, { position, chapter }) => updatePositionCache(position, chapter),
   });
 
   const handleTextSelect = useCallback((text: string, ctx: string, coords?: { x: number; y: number }) => {
@@ -60,22 +82,27 @@ export default function ReaderPage() {
     }, 2000);
   }, [savePositionMutation]);
 
-  // Save position on page exit (beforeunload)
+  // Save position whenever navigating away (SPA navigation or tab close)
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      const last = lastPositionRef.current;
+      if (!bookId || !last) return;
+      updatePositionCache(last.position, last.chapter);
+      persistPositionFetch(last.position, last.chapter);
+    };
+  }, [bookId, updatePositionCache, persistPositionFetch]);
+
+  // Also save on browser tab/window close
   useEffect(() => {
     const handleBeforeUnload = () => {
       const last = lastPositionRef.current;
       if (!bookId || !last) return;
-      navigator.sendBeacon(
-        `/api/books/${bookId}`,
-        new Blob(
-          [JSON.stringify({ currentPosition: last.position, currentChapter: last.chapter })],
-          { type: "application/json" }
-        )
-      );
+      persistPositionFetch(last.position, last.chapter);
     };
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [bookId]);
+  }, [bookId, persistPositionFetch]);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -235,31 +262,44 @@ export default function ReaderPage() {
   return (
     <div className="flex h-screen w-full">
       <div className="flex-1 min-w-0 relative">
-        <EpubReader
-          bookUrl={`/api/books/${bookId}/file`}
-          bookTitle={book.title}
-          initialPosition={book.currentPosition || undefined}
-          onPositionChange={handlePositionChange}
-          onTextSelect={handleTextSelect}
-        />
+        {fileError ? (
+          <div className="flex flex-col items-center justify-center h-full gap-4">
+            <AlertCircle className="w-12 h-12 text-destructive" />
+            <p className="text-destructive font-medium">{fileError}</p>
+            <p className="text-muted-foreground text-sm">Re-upload the book to fix this.</p>
+            <Button variant="outline" onClick={() => navigate("/")}>Back to Library</Button>
+          </div>
+        ) : (
+          <EpubReader
+            bookUrl={`/api/books/${bookId}/file`}
+            bookTitle={book.title}
+            initialPosition={book.currentPosition || undefined}
+            onPositionChange={handlePositionChange}
+            onTextSelect={handleTextSelect}
+            onError={setFileError}
+          />
+        )}
 
         {toolbarVisible && (
-          toolbarCoords ? (
-            <FloatingToolbar
-              onAction={handleAction}
-              onDismiss={() => setToolbarVisible(false)}
-              coords={toolbarCoords}
-            />
-          ) : (
-            <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center pb-6 pointer-events-none">
-              <div className="pointer-events-auto">
-                <FloatingToolbar
-                  onAction={handleAction}
-                  onDismiss={() => setToolbarVisible(false)}
-                />
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setToolbarVisible(false)} />
+            {toolbarCoords ? (
+              <FloatingToolbar
+                onAction={handleAction}
+                onDismiss={() => setToolbarVisible(false)}
+                coords={toolbarCoords}
+              />
+            ) : (
+              <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center pb-6 pointer-events-none">
+                <div className="pointer-events-auto">
+                  <FloatingToolbar
+                    onAction={handleAction}
+                    onDismiss={() => setToolbarVisible(false)}
+                  />
+                </div>
               </div>
-            </div>
-          )
+            )}
+          </>
         )}
       </div>
 

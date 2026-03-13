@@ -13,6 +13,7 @@ export const books = pgTable("books", {
   author: text("author"),
   fileType: text("file_type").notNull(),
   fileName: text("file_name").notNull(),
+  fileContent: text("file_content"),
   currentPosition: text("current_position"),
   currentChapter: text("current_chapter"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
