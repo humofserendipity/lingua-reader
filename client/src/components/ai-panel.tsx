@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import { Languages, BookText, GraduationCap, BookmarkPlus, X, BookOpen, Sparkles, Save, ChevronDown, ChevronRight, ALargeSmall } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { VocabItem } from "@shared/schema";
+import type { AIAction } from "@/components/floating-toolbar";
 
 const LS_PANEL_FONT = "ai-panel:fontSize";
 function getSavedPanelFont(): number {
@@ -26,10 +27,11 @@ interface AIPanelProps {
   context: string;
   aiResponse: string;
   aiLoading: boolean;
-  aiAction: string;
+  aiAction: AIAction | "";
   currentChapter?: string;
   onClose: () => void;
   onSaveVocab?: (type: "word" | "sentence") => void;
+  isMobile?: boolean;
 }
 
 export function AIPanel({
@@ -42,6 +44,7 @@ export function AIPanel({
   currentChapter,
   onClose,
   onSaveVocab,
+  isMobile,
 }: AIPanelProps) {
   const [activeTab, setActiveTab] = useState("ai");
   const [collapsedChapters, setCollapsedChapters] = useState<Set<string>>(new Set());
@@ -123,51 +126,65 @@ export function AIPanel({
   const showSaveButton = !aiLoading && aiResponse && selectedText &&
     (aiAction === "translate" || aiAction === "quick-grammar" || aiAction === "deep-grammar");
 
+  const aiResponseRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (isMobile && (aiLoading || aiResponse) && aiResponseRef.current) {
+      aiResponseRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [isMobile, aiLoading, aiResponse]);
+
+  const panelButtons = (
+    <div className="flex items-center gap-1">
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button size="icon" variant="ghost" title="Text size" data-testid="button-panel-font-size">
+            <ALargeSmall className="w-4 h-4" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="end" className="w-48 space-y-3">
+          <Label className="text-xs font-medium">Text Size: {panelFontSize}px</Label>
+          <Slider
+            min={11}
+            max={20}
+            step={1}
+            value={[panelFontSize]}
+            onValueChange={([v]) => handlePanelFontChange(v)}
+          />
+        </PopoverContent>
+      </Popover>
+      <Button size="icon" variant="ghost" onClick={onClose} data-testid="button-close-panel">
+        <X className="w-4 h-4" />
+      </Button>
+    </div>
+  );
+
   return (
     <div className="h-full flex flex-col bg-card/30">
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full">
-        <div className="flex items-center justify-between gap-4 px-3 py-2 border-b">
-          <TabsList className="h-8">
-            <TabsTrigger value="ai" className="text-xs gap-1.5" data-testid="tab-ai">
-              <Sparkles className="w-3 h-3" />
-              AI
-            </TabsTrigger>
-            <TabsTrigger value="vocab" className="text-xs gap-1.5" data-testid="tab-vocab">
-              <BookOpen className="w-3 h-3" />
-              Vocab ({vocabItems.length})
-            </TabsTrigger>
-          </TabsList>
-          <div className="flex items-center gap-1">
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button size="icon" variant="ghost" title="Text size" data-testid="button-panel-font-size">
-                  <ALargeSmall className="w-4 h-4" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="end" className="w-48 space-y-3">
-                <Label className="text-xs font-medium">Text Size: {panelFontSize}px</Label>
-                <Slider
-                  min={11}
-                  max={20}
-                  step={1}
-                  value={[panelFontSize]}
-                  onValueChange={([v]) => handlePanelFontChange(v)}
-                />
-              </PopoverContent>
-            </Popover>
-            <Button size="icon" variant="ghost" onClick={onClose} data-testid="button-close-panel">
-              <X className="w-4 h-4" />
-            </Button>
+      <Tabs value={isMobile ? "ai" : activeTab} onValueChange={setActiveTab} className="flex flex-col h-full">
+        {!isMobile && (
+          <div className="flex items-center justify-between gap-4 px-3 py-2 border-b">
+            <TabsList className="h-8">
+              <TabsTrigger value="ai" className="text-xs gap-1.5" data-testid="tab-ai">
+                <Sparkles className="w-3 h-3" />
+                AI
+              </TabsTrigger>
+              <TabsTrigger value="vocab" className="text-xs gap-1.5" data-testid="tab-vocab">
+                <BookOpen className="w-3 h-3" />
+                Vocab ({vocabItems.length})
+              </TabsTrigger>
+            </TabsList>
+            {panelButtons}
           </div>
-        </div>
+        )}
 
         <TabsContent value="ai" className="flex-1 mt-0 overflow-hidden">
           <ScrollArea className="h-full">
             <div className="p-4 space-y-4" style={{ fontSize: panelFontSize }}>
               {selectedText && (
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                    Selected Text
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Selected Text</span>
+                    {isMobile && panelButtons}
                   </div>
                   <Card className="p-3">
                     <p className="font-serif text-sm leading-relaxed">{selectedText}</p>
@@ -176,7 +193,7 @@ export function AIPanel({
               )}
 
               {(aiLoading || aiResponse) && (
-                <div className="space-y-2">
+                <div ref={aiResponseRef} className="space-y-2">
                   <div className="flex items-center gap-2 text-xs font-medium text-primary uppercase tracking-wider">
                     {getActionIcon()}
                     {getActionLabel()}

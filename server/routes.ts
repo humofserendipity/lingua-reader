@@ -247,7 +247,7 @@ export async function registerRoutes(
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
 
-      const model = genai.getGenerativeModel({ model: "gemini-1.5-flash", systemInstruction: systemPrompt });
+      const model = genai.getGenerativeModel({ model: "gemini-2.5-flash", systemInstruction: systemPrompt });
       const stream = await model.generateContentStream(userMessage);
 
       for await (const chunk of stream.stream) {
@@ -288,7 +288,7 @@ export async function registerRoutes(
         ? `Context from book: "${context}"\n\nSelected ${type}: "${text}"`
         : `Selected ${type}: "${text}"`;
 
-      const vocabModel = genai.getGenerativeModel({ model: "gemini-1.5-flash", systemInstruction: systemPrompt });
+      const vocabModel = genai.getGenerativeModel({ model: "gemini-2.5-flash", systemInstruction: systemPrompt });
       const response = await vocabModel.generateContent(userMessage);
 
       let aiData: any = {};

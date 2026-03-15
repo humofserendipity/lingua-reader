@@ -8,9 +8,10 @@ interface FloatingToolbarProps {
   onAction: (action: AIAction) => void;
   onDismiss: () => void;
   coords?: { x: number; y: number };
+  hideSave?: boolean;
 }
 
-export function FloatingToolbar({ onAction, onDismiss, coords }: FloatingToolbarProps) {
+export function FloatingToolbar({ onAction, onDismiss, coords, hideSave }: FloatingToolbarProps) {
   const style: React.CSSProperties = coords
     ? { position: "fixed", left: coords.x, top: coords.y + 8, transform: "translateX(-50%)", maxWidth: "calc(100vw - 16px)" }
     : { maxWidth: "calc(100vw - 16px)" };
@@ -30,13 +31,17 @@ export function FloatingToolbar({ onAction, onDismiss, coords }: FloatingToolbar
       <Button size="sm" variant="ghost" className="gap-1 text-xs px-2 h-7" onClick={() => onAction("deep-grammar")} data-testid="button-deep-grammar">
         <GraduationCap className="w-3 h-3" />Deep
       </Button>
-      <div className="w-px h-5 bg-border" />
-      <Button size="sm" variant="ghost" className="gap-1 text-xs px-2 h-7" onClick={() => onAction("save-word")} data-testid="button-save-word">
-        <BookmarkPlus className="w-3 h-3" />Word
-      </Button>
-      <Button size="sm" variant="ghost" className="gap-1 text-xs px-2 h-7" onClick={() => onAction("save-sentence")} data-testid="button-save-sentence">
-        <BookmarkPlus className="w-3 h-3" />Sentence
-      </Button>
+      {!hideSave && (
+        <>
+          <div className="w-px h-5 bg-border" />
+          <Button size="sm" variant="ghost" className="gap-1 text-xs px-2 h-7" onClick={() => onAction("save-word")} data-testid="button-save-word">
+            <BookmarkPlus className="w-3 h-3" />Word
+          </Button>
+          <Button size="sm" variant="ghost" className="gap-1 text-xs px-2 h-7" onClick={() => onAction("save-sentence")} data-testid="button-save-sentence">
+            <BookmarkPlus className="w-3 h-3" />Sentence
+          </Button>
+        </>
+      )}
       <div className="w-px h-5 bg-border" />
       <Button size="icon" variant="ghost" className="w-7 h-7" onClick={onDismiss} data-testid="button-dismiss-toolbar">
         <X className="w-3 h-3" />

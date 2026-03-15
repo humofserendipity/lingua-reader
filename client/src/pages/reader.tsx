@@ -20,7 +20,7 @@ export default function ReaderPage() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [aiResponse, setAiResponse] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiAction, setAiAction] = useState("");
+  const [aiAction, setAiAction] = useState<AIAction | ("")>("");
   const [toolbarVisible, setToolbarVisible] = useState(false);
   const [toolbarCoords, setToolbarCoords] = useState<{ x: number; y: number } | undefined>();
   const [panelWidth, setPanelWidth] = useState(380);
@@ -33,6 +33,8 @@ export default function ReaderPage() {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const [fileError, setFileError] = useState<string | null>(null);
+  const isMobileRef = useRef(window.matchMedia("(pointer: coarse)").matches);
+  const isMobile = isMobileRef.current;
 
   const { data: book, isLoading } = useQuery<Book>({
     queryKey: ["/api/books", bookId],
@@ -288,13 +290,15 @@ export default function ReaderPage() {
                 onAction={handleAction}
                 onDismiss={() => setToolbarVisible(false)}
                 coords={toolbarCoords}
+                hideSave={isMobile}
               />
             ) : (
-              <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center pb-6 pointer-events-none">
+              <div className={`fixed inset-x-0 z-50 flex justify-center pointer-events-none ${isMobile ? "top-[48px] pt-1" : "bottom-0 pb-6"}`}>
                 <div className="pointer-events-auto">
                   <FloatingToolbar
                     onAction={handleAction}
                     onDismiss={() => setToolbarVisible(false)}
+                    hideSave={isMobile}
                   />
                 </div>
               </div>
@@ -303,7 +307,27 @@ export default function ReaderPage() {
         )}
       </div>
 
-      {panelOpen && (
+      {panelOpen && isMobile && (
+        <div className="fixed inset-0 z-40" onClick={() => setPanelOpen(false)} />
+      )}
+      {panelOpen && isMobile && (
+        <div className="fixed inset-x-0 bottom-0 z-50 h-[40vh] bg-card/95 backdrop-blur-sm border-t shadow-lg overflow-hidden">
+          <AIPanel
+            bookId={bookId || undefined}
+            selectedText={selectedText}
+            context={context}
+            aiResponse={aiResponse}
+            aiLoading={aiLoading}
+            aiAction={aiAction}
+            currentChapter={currentChapter}
+            onClose={() => setPanelOpen(false)}
+            onSaveVocab={handleSaveFromPanel}
+            isMobile
+          />
+        </div>
+      )}
+
+      {panelOpen && !isMobile && (
         <>
           <div
             className="shrink-0 w-1.5 cursor-col-resize bg-border/50 hover-elevate active-elevate-2 transition-colors z-30"

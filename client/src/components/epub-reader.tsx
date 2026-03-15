@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import ePub, { type Book as EpubBook, type Rendition } from "epubjs";
-import { ChevronLeft, ChevronRight, ArrowLeft, Settings, Columns2, List, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, ArrowLeft, Settings, Columns2, List, X, Languages } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
@@ -58,7 +58,7 @@ export function EpubReader({
   const [currentChapter, setCurrentChapter] = useState("");
   const [atStart, setAtStart] = useState(true);
   const [atEnd, setAtEnd] = useState(false);
-  const [showControls, setShowControls] = useState(false);
+  const [showControls, setShowControls] = useState(() => isMobileRef.current);
   const [bookLoaded, setBookLoaded] = useState(false);
   const [tocItems, setTocItems] = useState<Array<{ id: string; label: string; href: string; level: number }>>([]);
   const [tocOpen, setTocOpen] = useState(false);
@@ -91,6 +91,7 @@ export function EpubReader({
 
   const showControlsTemporarily = useCallback(() => {
     setShowControls(true);
+    if (isMobileRef.current) return; // on mobile the toolbar is always visible
     if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
     controlsTimerRef.current = setTimeout(() => setShowControls(false), 3000);
   }, []);
@@ -127,7 +128,7 @@ export function EpubReader({
 
       const rendition = book.renderTo(container, isMobile
         ? { width, height, flow: "scrolled", manager: "continuous" }
-        : { width, height, spread: "none", flow: "paginated" }
+        : { width, height, spread: doublePage ? "auto" : "none", flow: "paginated" }
       );
       renditionRef.current = rendition;
 
@@ -236,6 +237,16 @@ export function EpubReader({
         const doc = contents.document;
         if (!doc) return;
 
+        // Inject CSS directly into iframe for reliable iOS callout suppression (once per doc)
+        if (isMobile && !doc.querySelector("style[data-lingua-touch]")) {
+          try {
+            const style = doc.createElement("style");
+            style.setAttribute("data-lingua-touch", "1");
+            style.textContent = `* { -webkit-touch-callout: none !important; touch-action: manipulation; } body { -webkit-user-select: text !important; user-select: text !important; }`;
+            (doc.head ?? doc.body)?.appendChild(style);
+          } catch { /* ignore */ }
+        }
+
         const cleanup: Array<() => void> = [];
 
         if (!isMobile) {
@@ -267,39 +278,58 @@ export function EpubReader({
           );
         }
 
-        // Mobile: listen to selectionchange since touch doesn't fire mouseup
         if (isMobile) {
-          let selectionTimer: ReturnType<typeof setTimeout> | null = null;
-          const handleSelectionChange = () => {
-            if (selectionTimer) clearTimeout(selectionTimer);
-            selectionTimer = setTimeout(() => {
+          // Custom long-press: fires at 150ms (~70% faster than iOS native ~500ms).
+          // Programmatically selects the word under the finger so selection appears sooner.
+          const LONG_PRESS_MS = 150;
+          let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+          let touchX = 0, touchY = 0;
+
+          const onTouchStart = (e: TouchEvent) => {
+            const t = e.touches[0];
+            touchX = t.clientX; touchY = t.clientY;
+            if (longPressTimer) clearTimeout(longPressTimer);
+            longPressTimer = setTimeout(() => {
               try {
-                const sel = doc.getSelection();
-                if (!sel || sel.rangeCount === 0) return;
-                const selectedText = sel.toString().trim();
-                if (!selectedText) return;
-                const range = sel.getRangeAt(0);
-                const surrounding = getSurroundingContext(range);
-                let coords: { x: number; y: number } | undefined;
-                try {
-                  const iframeEl = container.querySelector("iframe");
-                  if (iframeEl) {
-                    const iframeRect = iframeEl.getBoundingClientRect();
-                    const selRects = range.getClientRects();
-                    if (selRects.length > 0) {
-                      const lastRect = selRects[selRects.length - 1];
-                      coords = { x: iframeRect.left + lastRect.right, y: iframeRect.top + lastRect.bottom };
-                    }
+                let range: Range | null = null;
+                if ((doc as any).caretRangeFromPoint) {
+                  range = (doc as any).caretRangeFromPoint(touchX, touchY);
+                } else if ((doc as any).caretPositionFromPoint) {
+                  const pos = (doc as any).caretPositionFromPoint(touchX, touchY);
+                  if (pos) { range = doc.createRange(); range.setStart(pos.offsetNode, pos.offset); range.collapse(true); }
+                }
+                if (range) {
+                  const sel = doc.defaultView?.getSelection();
+                  if (sel) {
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                    (sel as any).modify?.("move", "backward", "word");
+                    (sel as any).modify?.("extend", "forward", "word");
                   }
-                } catch { /* ignore */ }
-                onTextSelect?.(selectedText, surrounding, coords);
+                }
               } catch { /* ignore */ }
-            }, 225);
+            }, LONG_PRESS_MS);
           };
-          doc.addEventListener("selectionchange", handleSelectionChange);
+
+          const cancelLongPress = (e: TouchEvent) => {
+            const t = e.touches[0] ?? e.changedTouches[0];
+            if (t) {
+              const dx = t.clientX - touchX, dy = t.clientY - touchY;
+              if (Math.hypot(dx, dy) > 8) { if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; } }
+            }
+          };
+
+          const onTouchEnd = () => { if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; } };
+
+          doc.addEventListener("touchstart", onTouchStart, { passive: true });
+          doc.addEventListener("touchmove", cancelLongPress, { passive: true });
+          doc.addEventListener("touchend", onTouchEnd, { passive: true });
+
           cleanup.push(() => {
-            doc.removeEventListener("selectionchange", handleSelectionChange);
-            if (selectionTimer) clearTimeout(selectionTimer);
+            doc.removeEventListener("touchstart", onTouchStart);
+            doc.removeEventListener("touchmove", cancelLongPress);
+            doc.removeEventListener("touchend", onTouchEnd);
+            if (longPressTimer) clearTimeout(longPressTimer);
           });
         }
 
@@ -435,6 +465,15 @@ export function EpubReader({
     return () => { if (wheelTimerRef.current) clearTimeout(wheelTimerRef.current); };
   }, []);
 
+  const getIframeSelectedText = (): string => {
+    try {
+      const iframe = viewerRef.current?.querySelector("iframe") as HTMLIFrameElement | null;
+      return iframe?.contentDocument?.getSelection()?.toString().trim()
+        ?? iframe?.contentWindow?.getSelection()?.toString().trim()
+        ?? "";
+    } catch { return ""; }
+  };
+
   const handleAreaClick = (e: React.MouseEvent) => {
     if (isMobileRef.current) return;
     const container = viewerRef.current;
@@ -458,7 +497,8 @@ export function EpubReader({
     <div className="flex flex-col h-full bg-background overflow-hidden">
       {/* Top toolbar */}
       <div
-        className={`shrink-0 flex items-center justify-between gap-4 px-3 py-1.5 border-b bg-card/80 backdrop-blur-sm transition-opacity duration-300 z-20 ${showControls || !bookLoaded ? "opacity-100" : "opacity-0 hover:opacity-100"}`}
+        className={`shrink-0 flex items-center justify-between gap-4 px-3 py-1.5 border-b bg-card/80 backdrop-blur-sm transition-opacity duration-300 z-20 ${showControls || !bookLoaded || isMobile ? "opacity-100" : "opacity-0 pointer-events-none hover:opacity-100 hover:pointer-events-auto"}`}
+        onTouchStart={showControlsTemporarily}
       >
         <div className="flex items-center gap-2 min-w-0">
           <Link href="/">
@@ -471,6 +511,20 @@ export function EpubReader({
           </span>
         </div>
         <div className="flex items-center gap-1">
+          {isMobile && (
+            <Button
+              size="icon"
+              variant="ghost"
+              title="Translate selected text"
+              onClick={() => {
+                const text = getIframeSelectedText();
+                if (text) onTextSelect?.(text, "", undefined);
+              }}
+            >
+              <Languages className="w-4 h-4" />
+            </Button>
+          )}
+
           <Button
             size="icon"
             variant={tocOpen ? "default" : "ghost"}
