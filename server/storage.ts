@@ -36,11 +36,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getBooksByUser(userId: string): Promise<Book[]> {
-    return db.select().from(books).where(eq(books.userId, userId)).orderBy(desc(books.createdAt));
+    return db.select().from(books).where(eq(books.userId, userId)).orderBy(desc(sql`COALESCE(${books.lastOpenedAt}, ${books.createdAt})`));
   }
 
   async updateBookPosition(id: number, position: string, chapter?: string): Promise<Book | undefined> {
-    const values: Partial<Book> = { currentPosition: position };
+    const values: Partial<Book> = { currentPosition: position, lastOpenedAt: new Date() };
     if (chapter !== undefined) values.currentChapter = chapter;
     const [updated] = await db.update(books).set(values).where(eq(books.id, id)).returning();
     return updated;

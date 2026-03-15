@@ -33,7 +33,11 @@ export default function ReaderPage() {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const [fileError, setFileError] = useState<string | null>(null);
-  const isMobileRef = useRef(window.matchMedia("(pointer: coarse)").matches);
+  const isMobileRef = useRef(
+    window.matchMedia("(pointer: coarse)").matches ||
+    ('ontouchstart' in window) ||
+    navigator.maxTouchPoints > 0
+  );
   const isMobile = isMobileRef.current;
 
   const { data: book, isLoading } = useQuery<Book>({

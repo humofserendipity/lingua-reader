@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Languages, BookText, GraduationCap, BookmarkPlus, X, BookOpen, Sparkles, Save, ChevronDown, ChevronRight, ALargeSmall } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -208,8 +209,25 @@ export function AIPanel({
                     </div>
                   ) : (
                     <Card className="p-4">
-                      <div className="prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed">
-                        <ReactMarkdown>{aiResponse}</ReactMarkdown>
+                      <div className="prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed break-words">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={{
+                            table: ({ children }) => (
+                              <div className="overflow-x-auto my-3">
+                                <table className="w-full border-collapse text-sm">{children}</table>
+                              </div>
+                            ),
+                            th: ({ children }) => (
+                              <th className="border border-border px-3 py-1.5 text-left bg-muted/50 font-medium whitespace-nowrap">{children}</th>
+                            ),
+                            td: ({ children }) => (
+                              <td className="border border-border px-3 py-1.5">{children}</td>
+                            ),
+                          }}
+                        >
+                          {aiResponse}
+                        </ReactMarkdown>
                       </div>
                     </Card>
                   )}

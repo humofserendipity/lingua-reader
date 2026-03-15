@@ -49,8 +49,14 @@ export function EpubReader({
   const bookRef = useRef<EpubBook | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
   const currentCfiRef = useRef<string>("");
-  // Detect touch device once — stable for the session
-  const isMobileRef = useRef(window.matchMedia("(pointer: coarse)").matches);
+  // Detect touch device once — stable for the session.
+  // Combine multiple signals: pointer:coarse alone misses some Android browsers,
+  // tablets with styluses, and browsers that report pointer:fine on touch screens.
+  const isMobileRef = useRef(
+    window.matchMedia("(pointer: coarse)").matches ||
+    ('ontouchstart' in window) ||
+    navigator.maxTouchPoints > 0
+  );
 
   const [fontSize, setFontSize] = useState<number>(() => getSaved("fontSize", 100));
   const [fontFamily, setFontFamily] = useState<string>(() => getSaved("fontFamily", "serif"));
@@ -494,10 +500,10 @@ export function EpubReader({
   const isMobile = isMobileRef.current;
 
   return (
-    <div className="flex flex-col h-full bg-background overflow-hidden">
+    <div className="absolute inset-0 flex flex-col bg-background overflow-hidden">
       {/* Top toolbar */}
       <div
-        className={`shrink-0 flex items-center justify-between gap-4 px-3 py-1.5 border-b bg-card/80 backdrop-blur-sm transition-opacity duration-300 z-20 ${showControls || !bookLoaded || isMobile ? "opacity-100" : "opacity-0 pointer-events-none hover:opacity-100 hover:pointer-events-auto"}`}
+        className="relative z-20 shrink-0 flex items-center justify-between gap-4 px-3 py-1.5 border-b bg-card/80 backdrop-blur-sm"
         onTouchStart={showControlsTemporarily}
       >
         <div className="flex items-center gap-2 min-w-0">

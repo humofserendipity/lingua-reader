@@ -17,6 +17,7 @@ export const books = pgTable("books", {
   currentPosition: text("current_position"),
   currentChapter: text("current_chapter"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  lastOpenedAt: timestamp("last_opened_at"),
 });
 
 export const vocabItems = pgTable("vocab_items", {
